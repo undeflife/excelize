@@ -31,8 +31,8 @@ func (r RichText) apply(font *xlsxFont) RichText {
 	if font == nil {
 		return r
 	}
-	for i := 0; i < len(r.runs); i++ {
-		run := &r.runs[i]
+	for i := 0; i < len(r.Runs); i++ {
+		run := &r.Runs[i]
 		if run.Font == nil {
 			run.Font = new(Font)
 		}
@@ -53,7 +53,7 @@ func (r RichText) apply(font *xlsxFont) RichText {
 }
 
 func (r RichText) isEmpty() bool {
-	return r.runs == nil || (r.runs[0].Text == "" && r.runs[0].Font == nil)
+	return r.Runs == nil || (r.Runs[0].Text == "" && r.Runs[0].Font == nil)
 }
 
 // Values return the current row's column values. This fetches the worksheet
