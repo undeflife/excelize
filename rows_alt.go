@@ -8,7 +8,7 @@ import (
 )
 
 type RichText struct {
-	runs []RichTextRun
+	Runs []RichTextRun
 }
 
 // rowRichIterator defined runtime use field for the worksheet row SAX parser.
