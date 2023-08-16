@@ -45,7 +45,7 @@ func (r RichText) apply(font *xlsxFont) RichText {
 		if font.Strike != nil {
 			run.Font.Strike = true
 		}
-		if font.U != nil {
+		if font.U != nil && font.U.Val != nil {
 			run.Font.Underline = "single"
 		}
 	}
