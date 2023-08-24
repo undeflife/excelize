@@ -100,8 +100,8 @@ func (f *File) formattedRichValue(c *xlsxC, raw bool, cellType CellType) (RichTe
 	if wb != nil && wb.WorkbookPr != nil {
 		date1904 = wb.WorkbookPr.Date1904
 	}
-	if fmtCode, ok := f.getBuiltInNumFmtCode(numFmtID); ok {
-		return newRichText(f.applyBuiltInNumFmt(c, fmtCode, numFmtID, date1904, cellType)).apply(font), err
+	if fmtCode, ok := styleSheet.getCustomNumFmtCode(numFmtID); ok {
+		return newRichText(format(c.V, fmtCode, date1904, cellType, f.options)).apply(font), err
 	}
-	return newRichText(f.applyNumFmt(c, styleSheet, numFmtID, date1904, cellType)).apply(font), err
+	return newRichText(c.V).apply(font), err
 }
