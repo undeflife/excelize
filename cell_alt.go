@@ -40,7 +40,7 @@ func (c *xlsxC) getRichValueFrom(f *File, d *xlsxSST, raw bool) (RichText, error
 					val, err := f.formattedRichValue(&xlsxC{S: c.S, V: shared.String()}, raw, CellTypeSharedString)
 					return val, err
 				} else {
-					return RichText{getCellRichText(&shared)}, nil
+					return RichText{f.getCellRichText(&shared)}, nil
 				}
 			}
 		}
@@ -104,4 +104,21 @@ func (f *File) formattedRichValue(c *xlsxC, raw bool, cellType CellType) (RichTe
 		return newRichText(format(c.V, fmtCode, date1904, cellType, f.options)).apply(font), err
 	}
 	return newRichText(c.V).apply(font), err
+}
+
+// getCellRichText returns rich text of cell by given string item that will apply theme color to Font int RichTextRun
+func (f *File) getCellRichText(si *xlsxSI) (runs []RichTextRun) {
+	for _, v := range si.R {
+		run := RichTextRun{
+			Text: v.T.Val,
+		}
+		if v.RPr != nil {
+			run.Font = newFont(v.RPr)
+			if run.Font.Color == "" {
+				run.Font.Color = f.getThemeColor(v.RPr.Color)
+			}
+		}
+		runs = append(runs, run)
+	}
+	return
 }
