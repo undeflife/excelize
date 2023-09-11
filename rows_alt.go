@@ -48,6 +48,9 @@ func (r RichText) apply(font *xlsxFont) RichText {
 		if font.U != nil && font.U.Val != nil {
 			run.Font.Underline = "single"
 		}
+		if font.Color != nil && font.Color.RGB != "" {
+			run.Font.Color = font.Color.RGB
+		}
 	}
 	return r
 }
