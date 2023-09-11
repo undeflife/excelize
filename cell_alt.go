@@ -90,6 +90,8 @@ func (f *File) formattedRichValue(c *xlsxC, raw bool, cellType CellType) (RichTe
 	var font *xlsxFont
 	if styleSheet.CellXfs.Xf[c.S].FontID != nil {
 		font = styleSheet.Fonts.Font[*styleSheet.CellXfs.Xf[c.S].FontID]
+		// replace color rgb 
+		font.Color.RGB = f.getThemeColor(font.Color)
 	}
 
 	date1904 := false
