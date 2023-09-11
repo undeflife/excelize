@@ -1127,7 +1127,7 @@ func (f *File) getThemeColor(clr *xlsxColor) string {
 	if len(clr.RGB) == 8 {
 		return strings.TrimPrefix(clr.RGB, "FF")
 	}
-	if f.Styles.Colors != nil && clr.Indexed < len(f.Styles.Colors.IndexedColors.RgbColor) {
+	if f.Styles.Colors != nil && f.Styles.Colors.IndexedColors != nil && clr.Indexed < len(f.Styles.Colors.IndexedColors.RgbColor) {
 		return strings.TrimPrefix(ThemeColor(strings.TrimPrefix(f.Styles.Colors.IndexedColors.RgbColor[clr.Indexed].RGB, "FF"), clr.Tint), "FF")
 	}
 	if clr.Indexed < len(IndexedColorMapping) {
@@ -1302,7 +1302,7 @@ func (f *File) extractProtection(xf xlsxXf, s *xlsxStyleSheet, style *Style) {
 	}
 }
 
-// GetStyle get style details by given style index.
+// GetStyle provides a function to get style definition by given style index.
 func (f *File) GetStyle(idx int) (*Style, error) {
 	var style *Style
 	f.mu.Lock()

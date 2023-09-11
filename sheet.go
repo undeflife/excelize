@@ -1123,8 +1123,8 @@ func attrValToBool(name string, attrs []xml.Attr) (val bool, err error) {
 //	 DifferentFirst   | Different first-page header and footer indicator
 //	 DifferentOddEven | Different odd and even page headers and footers indicator
 //	 ScaleWithDoc     | Scale header and footer with document scaling
-//	 OddFooter        | Odd Page Footer
-//	 OddHeader        | Odd Header
+//	 OddFooter        | Odd Page Footer, or primary Page Footer if 'DifferentOddEven' is 'false'
+//	 OddHeader        | Odd Header, or primary Page Header if 'DifferentOddEven' is 'false'
 //	 EvenFooter       | Even Page Footer
 //	 EvenHeader       | Even Page Header
 //	 FirstFooter      | First Page Footer
@@ -1595,7 +1595,7 @@ func (f *File) SetDefinedName(definedName *DefinedName) error {
 	if definedName.Name == "" || definedName.RefersTo == "" {
 		return ErrParameterInvalid
 	}
-	if err := checkDefinedName(definedName.Name); err != nil {
+	if err := checkDefinedName(definedName.Name); err != nil && inStrSlice(builtInDefinedNames[:2], definedName.Name, false) == -1 {
 		return err
 	}
 	wb, err := f.workbookReader()
