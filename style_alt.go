@@ -20,14 +20,10 @@ func (f *File) getColorScheme(clr *xlsxColor) string {
 	case 0:
 		if f.Theme.ThemeElements.ClrScheme.Dk1.SysClr != nil {
 			rgb = f.Theme.ThemeElements.ClrScheme.Dk1.SysClr.LastClr
-		} else if f.Theme.ThemeElements.ClrScheme.Dk1.SrgbClr != nil {
-			rgb = *f.Theme.ThemeElements.ClrScheme.Dk1.SrgbClr.Val
 		}
 	case 1:
 		if f.Theme.ThemeElements.ClrScheme.Lt1.SysClr != nil {
 			rgb = f.Theme.ThemeElements.ClrScheme.Lt1.SysClr.LastClr
-		} else if f.Theme.ThemeElements.ClrScheme.Lt1.SrgbClr != nil {
-			rgb = *f.Theme.ThemeElements.ClrScheme.Lt1.SrgbClr.Val
 		}
 	case 2:
 		rgb = *f.Theme.ThemeElements.ClrScheme.Dk2.SrgbClr.Val
