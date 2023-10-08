@@ -150,10 +150,11 @@ func (f *File) GetTables(sheet string) ([]Table, error) {
 				return tables, err
 			}
 			table := Table{
-				rID:   tbl.RID,
-				tID:   t.ID,
-				Range: t.Ref,
-				Name:  t.Name,
+				rID:      tbl.RID,
+				tID:      t.ID,
+				tableXML: tableXML,
+				Range:    t.Ref,
+				Name:     t.Name,
 			}
 			if t.TableStyleInfo != nil {
 				table.StyleName = t.TableStyleInfo.Name
@@ -186,24 +187,14 @@ func (f *File) DeleteTable(name string) error {
 			for i, tbl := range ws.TableParts.TableParts {
 				if tbl.RID == table.rID {
 					ws.TableParts.TableParts = append(ws.TableParts.TableParts[:i], ws.TableParts.TableParts[i+1:]...)
+					f.Pkg.Delete(table.tableXML)
+					_ = f.removeContentTypesPart(ContentTypeSpreadSheetMLTable, "/"+table.tableXML)
 					f.deleteSheetRelationships(sheet, tbl.RID)
 					break
 				}
 			}
 			if ws.TableParts.Count = len(ws.TableParts.TableParts); ws.TableParts.Count == 0 {
 				ws.TableParts = nil
-			}
-			// Delete cell value in the table header
-			coordinates, err := rangeRefToCoordinates(table.Range)
-			if err != nil {
-				return err
-			}
-			_ = sortCoordinates(coordinates)
-			for col := coordinates[0]; col <= coordinates[2]; col++ {
-				for row := coordinates[1]; row < coordinates[1]+1; row++ {
-					cell, _ := CoordinatesToCellName(col, row)
-					err = f.SetCellValue(sheet, cell, nil)
-				}
 			}
 			return err
 		}
@@ -217,7 +208,7 @@ func (f *File) countTables() int {
 	count := 0
 	f.Pkg.Range(func(k, v interface{}) bool {
 		if strings.Contains(k.(string), "xl/tables/tableSingleCells") {
-			var cells xlsxSingleXmlCells
+			var cells xlsxSingleXMLCells
 			if err := f.xmlNewDecoder(bytes.NewReader(namespaceStrictToTransitional(v.([]byte)))).
 				Decode(&cells); err != nil && err != io.EOF {
 				count++
@@ -513,12 +504,12 @@ func (f *File) autoFilter(sheet, ref string, columns, col int, opts []AutoFilter
 		}
 		offset := fsCol - col
 		if offset < 0 || offset > columns {
-			return fmt.Errorf("incorrect index of column '%s'", opt.Column)
+			return newInvalidAutoFilterColumnError(opt.Column)
 		}
 		fc := &xlsxFilterColumn{ColID: offset}
 		token := expressionFormat.FindAllString(opt.Expression, -1)
 		if len(token) != 3 && len(token) != 7 {
-			return fmt.Errorf("incorrect number of tokens in criteria '%s'", opt.Expression)
+			return newInvalidAutoFilterExpError(opt.Expression)
 		}
 		expressions, tokens, err := f.parseFilterExpression(opt.Expression, token)
 		if err != nil {
@@ -647,7 +638,7 @@ func (f *File) parseFilterTokens(expression string, tokens []string) ([]int, str
 	if re {
 		// Only allow Equals or NotEqual in this context.
 		if operator != 2 && operator != 5 {
-			return []int{operator}, token, fmt.Errorf("the operator '%s' in expression '%s' is not valid in relation to Blanks/NonBlanks'", tokens[1], expression)
+			return []int{operator}, token, newInvalidAutoFilterOperatorError(tokens[1], expression)
 		}
 		token = strings.ToLower(token)
 		// The operator should always be 2 (=) to flag a "simple" equality in

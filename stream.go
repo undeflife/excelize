@@ -118,7 +118,7 @@ func (f *File) NewStreamWriter(sheet string) (*StreamWriter, error) {
 	}
 	sheetID := f.getSheetID(sheet)
 	if sheetID == -1 {
-		return nil, newNoExistSheetError(sheet)
+		return nil, ErrSheetNotExist{sheet}
 	}
 	sw := &StreamWriter{
 		file:    f,
@@ -567,15 +567,15 @@ func setCellIntFunc(c *xlsxC, val interface{}) (err error) {
 	case int64:
 		c.T, c.V = setCellInt(int(val))
 	case uint:
-		c.T, c.V = setCellInt(int(val))
+		c.T, c.V = setCellUint(uint64(val))
 	case uint8:
-		c.T, c.V = setCellInt(int(val))
+		c.T, c.V = setCellUint(uint64(val))
 	case uint16:
-		c.T, c.V = setCellInt(int(val))
+		c.T, c.V = setCellUint(uint64(val))
 	case uint32:
-		c.T, c.V = setCellInt(int(val))
+		c.T, c.V = setCellUint(uint64(val))
 	case uint64:
-		c.T, c.V = setCellInt(int(val))
+		c.T, c.V = setCellUint(val)
 	default:
 	}
 	return
