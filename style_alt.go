@@ -16,6 +16,12 @@ func (f *File) getColorScheme(clr *xlsxColor) string {
 	if clr == nil || f.Theme == nil {
 		return rgb
 	}
+	if len(clr.RGB) == 6 {
+		return clr.RGB
+	}
+	if len(clr.RGB) == 8 {
+		return strings.TrimPrefix(clr.RGB, "FF")
+	}
 	switch *clr.Theme {
 	case 0:
 		if f.Theme.ThemeElements.ClrScheme.Dk1.SysClr != nil {
