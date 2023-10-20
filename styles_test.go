@@ -352,16 +352,24 @@ func TestNewStyle(t *testing.T) {
 	assert.Equal(t, ErrCellStyles, err)
 }
 
-func TestNewConditionalStyle(t *testing.T) {
+func TestConditionalStyle(t *testing.T) {
 	f := NewFile()
-	_, err := f.NewConditionalStyle(&Style{Protection: &Protection{Hidden: true, Locked: true}})
+	expected := &Style{Protection: &Protection{Hidden: true, Locked: true}}
+	idx, err := f.NewConditionalStyle(expected)
 	assert.NoError(t, err)
+	style, err := f.GetConditionalStyle(idx)
+	assert.NoError(t, err)
+	assert.Equal(t, expected, style)
 	_, err = f.NewConditionalStyle(&Style{DecimalPlaces: intPtr(4), NumFmt: 165, NegRed: true})
 	assert.NoError(t, err)
 	_, err = f.NewConditionalStyle(&Style{DecimalPlaces: intPtr(-1)})
 	assert.NoError(t, err)
-	_, err = f.NewConditionalStyle(&Style{NumFmt: 1})
+	expected = &Style{NumFmt: 1}
+	idx, err = f.NewConditionalStyle(expected)
 	assert.NoError(t, err)
+	style, err = f.GetConditionalStyle(idx)
+	assert.NoError(t, err)
+	assert.Equal(t, expected, style)
 	_, err = f.NewConditionalStyle(&Style{NumFmt: 27})
 	assert.NoError(t, err)
 	numFmt := "general"
@@ -375,6 +383,26 @@ func TestNewConditionalStyle(t *testing.T) {
 	f.Pkg.Store(defaultXMLPathStyles, MacintoshCyrillicCharset)
 	_, err = f.NewConditionalStyle(&Style{Font: &Font{Color: "9A0511"}, Fill: Fill{Type: "pattern", Color: []string{"FEC7CE"}, Pattern: 1}})
 	assert.EqualError(t, err, "XML syntax error on line 1: invalid UTF-8")
+	// Test get conditional style with invalid style index
+	_, err = f.GetConditionalStyle(1)
+	assert.Equal(t, newInvalidStyleID(1), err)
+	// Test get conditional style with unsupported charset style sheet
+	f.Styles = nil
+	f.Pkg.Store(defaultXMLPathStyles, MacintoshCyrillicCharset)
+	_, err = f.GetConditionalStyle(1)
+	assert.EqualError(t, err, "XML syntax error on line 1: invalid UTF-8")
+
+	f = NewFile()
+	// Test get conditional style with background color and empty pattern type
+	idx, err = f.NewConditionalStyle(&Style{Fill: Fill{Type: "pattern", Color: []string{"FEC7CE"}, Pattern: 1}})
+	assert.NoError(t, err)
+	f.Styles.Dxfs.Dxfs[0].Fill.PatternFill.PatternType = ""
+	f.Styles.Dxfs.Dxfs[0].Fill.PatternFill.FgColor = nil
+	f.Styles.Dxfs.Dxfs[0].Fill.PatternFill.BgColor = &xlsxColor{Theme: intPtr(6)}
+	style, err = f.GetConditionalStyle(idx)
+	assert.NoError(t, err)
+	assert.Equal(t, "pattern", style.Fill.Type)
+	assert.Equal(t, []string{"A5A5A5"}, style.Fill.Color)
 }
 
 func TestGetDefaultFont(t *testing.T) {
@@ -420,7 +448,7 @@ func TestThemeReader(t *testing.T) {
 	f.Pkg.Store(defaultXMLPathTheme, MacintoshCyrillicCharset)
 	theme, err := f.themeReader()
 	assert.EqualError(t, err, "XML syntax error on line 1: invalid UTF-8")
-	assert.EqualValues(t, &xlsxTheme{XMLNSa: NameSpaceDrawingML.Value, XMLNSr: SourceRelationship.Value}, theme)
+	assert.EqualValues(t, &decodeTheme{}, theme)
 }
 
 func TestSetCellStyle(t *testing.T) {
