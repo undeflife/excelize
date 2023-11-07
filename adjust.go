@@ -15,7 +15,11 @@ import (
 	"bytes"
 	"encoding/xml"
 	"io"
+	"strconv"
 	"strings"
+	"unicode"
+
+	"github.com/xuri/efp"
 )
 
 type adjustDirection bool
@@ -24,6 +28,28 @@ const (
 	columns adjustDirection = false
 	rows    adjustDirection = true
 )
+
+// adjustHelperFunc defines functions to adjust helper.
+var adjustHelperFunc = [6]func(*File, *xlsxWorksheet, string, adjustDirection, int, int, int) error{
+	func(f *File, ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
+		return f.adjustTable(ws, sheet, dir, num, offset, sheetID)
+	},
+	func(f *File, ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
+		return f.adjustMergeCells(ws, sheet, dir, num, offset, sheetID)
+	},
+	func(f *File, ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
+		return f.adjustAutoFilter(ws, sheet, dir, num, offset, sheetID)
+	},
+	func(f *File, ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
+		return f.adjustCalcChain(ws, sheet, dir, num, offset, sheetID)
+	},
+	func(f *File, ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
+		return f.adjustVolatileDeps(ws, sheet, dir, num, offset, sheetID)
+	},
+	func(f *File, ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
+		return f.adjustDrawings(ws, sheet, dir, num, offset, sheetID)
+	},
+}
 
 // adjustHelper provides a function to adjust rows and columns dimensions,
 // hyperlinks, merged cells and auto filter when inserting or deleting rows or
@@ -34,7 +60,7 @@ const (
 // row: Index number of the row we're inserting/deleting before
 // offset: Number of rows/column to insert/delete negative values indicate deletion
 //
-// TODO: adjustPageBreaks, adjustComments, adjustDataValidations, adjustProtectedCells
+// TODO: adjustComments, adjustDataValidations, adjustDrawings, adjustPageBreaks, adjustProtectedCells
 func (f *File) adjustHelper(sheet string, dir adjustDirection, num, offset int) error {
 	ws, err := f.workSheetReader(sheet)
 	if err != nil {
@@ -42,31 +68,24 @@ func (f *File) adjustHelper(sheet string, dir adjustDirection, num, offset int) 
 	}
 	sheetID := f.getSheetID(sheet)
 	if dir == rows {
-		err = f.adjustRowDimensions(ws, num, offset)
+		err = f.adjustRowDimensions(sheet, ws, num, offset)
 	} else {
-		err = f.adjustColDimensions(ws, num, offset)
+		err = f.adjustColDimensions(sheet, ws, num, offset)
 	}
 	if err != nil {
 		return err
 	}
 	f.adjustHyperlinks(ws, sheet, dir, num, offset)
-	f.adjustTable(ws, sheet, dir, num, offset)
-	if err = f.adjustMergeCells(ws, dir, num, offset); err != nil {
-		return err
-	}
-	if err = f.adjustAutoFilter(ws, dir, num, offset); err != nil {
-		return err
-	}
-	if err = f.adjustCalcChain(dir, num, offset, sheetID); err != nil {
-		return err
-	}
 	ws.checkSheet()
 	_ = ws.checkRow()
-
+	for _, fn := range adjustHelperFunc {
+		if err := fn(f, ws, sheet, dir, num, offset, sheetID); err != nil {
+			return err
+		}
+	}
 	if ws.MergeCells != nil && len(ws.MergeCells.Cells) == 0 {
 		ws.MergeCells = nil
 	}
-
 	return nil
 }
 
@@ -116,7 +135,7 @@ func (f *File) adjustCols(ws *xlsxWorksheet, col, offset int) error {
 
 // adjustColDimensions provides a function to update column dimensions when
 // inserting or deleting rows or columns.
-func (f *File) adjustColDimensions(ws *xlsxWorksheet, col, offset int) error {
+func (f *File) adjustColDimensions(sheet string, ws *xlsxWorksheet, col, offset int) error {
 	for rowIdx := range ws.SheetData.Row {
 		for _, v := range ws.SheetData.Row[rowIdx].C {
 			if cellCol, _, _ := CellNameToCoordinates(v.R); col <= cellCol {
@@ -126,12 +145,23 @@ func (f *File) adjustColDimensions(ws *xlsxWorksheet, col, offset int) error {
 			}
 		}
 	}
-	for rowIdx := range ws.SheetData.Row {
-		for colIdx, v := range ws.SheetData.Row[rowIdx].C {
-			if cellCol, cellRow, _ := CellNameToCoordinates(v.R); col <= cellCol {
-				if newCol := cellCol + offset; newCol > 0 {
-					ws.SheetData.Row[rowIdx].C[colIdx].R, _ = CoordinatesToCellName(newCol, cellRow)
-					_ = f.adjustFormula(ws.SheetData.Row[rowIdx].C[colIdx].F, columns, offset, false)
+	for _, sheetN := range f.GetSheetList() {
+		worksheet, err := f.workSheetReader(sheetN)
+		if err != nil {
+			if err.Error() == newNotWorksheetError(sheetN).Error() {
+				continue
+			}
+			return err
+		}
+		for rowIdx := range worksheet.SheetData.Row {
+			for colIdx, v := range worksheet.SheetData.Row[rowIdx].C {
+				if cellCol, cellRow, _ := CellNameToCoordinates(v.R); sheetN == sheet && col <= cellCol {
+					if newCol := cellCol + offset; newCol > 0 {
+						worksheet.SheetData.Row[rowIdx].C[colIdx].R, _ = CoordinatesToCellName(newCol, cellRow)
+					}
+				}
+				if err := f.adjustFormula(sheet, sheetN, worksheet.SheetData.Row[rowIdx].C[colIdx].F, columns, col, offset, false); err != nil {
+					return err
 				}
 			}
 		}
@@ -141,56 +171,270 @@ func (f *File) adjustColDimensions(ws *xlsxWorksheet, col, offset int) error {
 
 // adjustRowDimensions provides a function to update row dimensions when
 // inserting or deleting rows or columns.
-func (f *File) adjustRowDimensions(ws *xlsxWorksheet, row, offset int) error {
+func (f *File) adjustRowDimensions(sheet string, ws *xlsxWorksheet, row, offset int) error {
+	for _, sheetN := range f.GetSheetList() {
+		if sheetN == sheet {
+			continue
+		}
+		worksheet, err := f.workSheetReader(sheetN)
+		if err != nil {
+			if err.Error() == newNotWorksheetError(sheetN).Error() {
+				continue
+			}
+			return err
+		}
+		numOfRows := len(worksheet.SheetData.Row)
+		for i := 0; i < numOfRows; i++ {
+			r := &worksheet.SheetData.Row[i]
+			if err = f.adjustSingleRowFormulas(sheet, sheetN, r, row, offset, false); err != nil {
+				return err
+			}
+		}
+	}
 	totalRows := len(ws.SheetData.Row)
 	if totalRows == 0 {
 		return nil
 	}
 	lastRow := &ws.SheetData.Row[totalRows-1]
-	if newRow := lastRow.R + offset; lastRow.R >= row && newRow > 0 && newRow >= TotalRows {
+	if newRow := lastRow.R + offset; lastRow.R >= row && newRow > 0 && newRow > TotalRows {
 		return ErrMaxRows
 	}
-	for i := 0; i < len(ws.SheetData.Row); i++ {
+	numOfRows := len(ws.SheetData.Row)
+	for i := 0; i < numOfRows; i++ {
 		r := &ws.SheetData.Row[i]
 		if newRow := r.R + offset; r.R >= row && newRow > 0 {
-			f.adjustSingleRowDimensions(r, newRow, offset, false)
+			r.adjustSingleRowDimensions(offset)
+		}
+		if err := f.adjustSingleRowFormulas(sheet, sheet, r, row, offset, false); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
 // adjustSingleRowDimensions provides a function to adjust single row dimensions.
-func (f *File) adjustSingleRowDimensions(r *xlsxRow, num, offset int, si bool) {
-	r.R = num
+func (r *xlsxRow) adjustSingleRowDimensions(offset int) {
+	r.R += offset
 	for i, col := range r.C {
 		colName, _, _ := SplitCellName(col.R)
-		r.C[i].R, _ = JoinCellName(colName, num)
-		_ = f.adjustFormula(col.F, rows, offset, si)
+		r.C[i].R, _ = JoinCellName(colName, r.R)
 	}
 }
 
-// adjustFormula provides a function to adjust shared formula reference.
-func (f *File) adjustFormula(formula *xlsxF, dir adjustDirection, offset int, si bool) error {
-	if formula != nil && formula.Ref != "" {
-		coordinates, err := rangeRefToCoordinates(formula.Ref)
-		if err != nil {
+// adjustSingleRowFormulas provides a function to adjust single row formulas.
+func (f *File) adjustSingleRowFormulas(sheet, sheetN string, r *xlsxRow, num, offset int, si bool) error {
+	for _, col := range r.C {
+		if err := f.adjustFormula(sheet, sheetN, col.F, rows, num, offset, si); err != nil {
 			return err
 		}
-		if dir == columns {
+	}
+	return nil
+}
+
+// adjustCellRef provides a function to adjust cell reference.
+func (f *File) adjustCellRef(ref string, dir adjustDirection, num, offset int) (string, error) {
+	if !strings.Contains(ref, ":") {
+		ref += ":" + ref
+	}
+	coordinates, err := rangeRefToCoordinates(ref)
+	if err != nil {
+		return ref, err
+	}
+	if dir == columns {
+		if coordinates[0] >= num {
 			coordinates[0] += offset
+		}
+		if coordinates[2] >= num {
 			coordinates[2] += offset
-		} else {
+		}
+	} else {
+		if coordinates[1] >= num {
 			coordinates[1] += offset
+		}
+		if coordinates[3] >= num {
 			coordinates[3] += offset
 		}
-		if formula.Ref, err = f.coordinatesToRangeRef(coordinates); err != nil {
+	}
+	return f.coordinatesToRangeRef(coordinates)
+}
+
+// adjustFormula provides a function to adjust formula reference and shared
+// formula reference.
+func (f *File) adjustFormula(sheet, sheetN string, formula *xlsxF, dir adjustDirection, num, offset int, si bool) error {
+	if formula == nil {
+		return nil
+	}
+	var err error
+	if formula.Ref != "" && sheet == sheetN {
+		if formula.Ref, err = f.adjustCellRef(formula.Ref, dir, num, offset); err != nil {
 			return err
 		}
 		if si && formula.Si != nil {
 			formula.Si = intPtr(*formula.Si + 1)
 		}
 	}
+	if formula.Content != "" {
+		if formula.Content, err = f.adjustFormulaRef(sheet, sheetN, formula.Content, dir, num, offset); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// isFunctionStop provides a function to check if token is a function stop.
+func isFunctionStop(token efp.Token) bool {
+	return token.TType == efp.TokenTypeFunction && token.TSubType == efp.TokenSubTypeStop
+}
+
+// isFunctionStart provides a function to check if token is a function start.
+func isFunctionStart(token efp.Token) bool {
+	return token.TType == efp.TokenTypeFunction && token.TSubType == efp.TokenSubTypeStart
+}
+
+// escapeSheetName enclose sheet name in single quotation marks if the giving
+// worksheet name includes spaces or non-alphabetical characters.
+func escapeSheetName(name string) string {
+	if strings.IndexFunc(name, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	}) != -1 {
+		return string(efp.QuoteSingle) + name + string(efp.QuoteSingle)
+	}
+	return name
+}
+
+// adjustFormulaColumnName adjust column name in the formula reference.
+func adjustFormulaColumnName(name string, dir adjustDirection, num, offset int) (string, error) {
+	col, err := ColumnNameToNumber(name)
+	if err != nil {
+		return name, err
+	}
+	if dir == columns && col >= num {
+		col += offset
+		return ColumnNumberToName(col)
+	}
+	return name, nil
+}
+
+// adjustFormulaRowNumber adjust row number in the formula reference.
+func adjustFormulaRowNumber(name string, dir adjustDirection, num, offset int) (string, error) {
+	row, _ := strconv.Atoi(name)
+	if dir == rows && row >= num {
+		row += offset
+		if row > TotalRows {
+			return name, ErrMaxRows
+		}
+		return strconv.Itoa(row), nil
+	}
+	return name, nil
+}
+
+// adjustFormulaOperandRef adjust cell reference in the operand tokens for the formula.
+func adjustFormulaOperandRef(row, col, operand string, dir adjustDirection, num int, offset int) (string, string, string, error) {
+	if col != "" {
+		name, err := adjustFormulaColumnName(col, dir, num, offset)
+		if err != nil {
+			return row, col, operand, err
+		}
+		operand += name
+		col = ""
+	}
+	if row != "" {
+		name, err := adjustFormulaRowNumber(row, dir, num, offset)
+		if err != nil {
+			return row, col, operand, err
+		}
+		operand += name
+		row = ""
+	}
+	return row, col, operand, nil
+}
+
+// adjustFormulaOperand adjust range operand tokens for the formula.
+func (f *File) adjustFormulaOperand(sheet, sheetN string, token efp.Token, dir adjustDirection, num int, offset int) (string, error) {
+	var (
+		err                          error
+		sheetName, col, row, operand string
+		cell                         = token.TValue
+		tokens                       = strings.Split(token.TValue, "!")
+	)
+	if len(tokens) == 2 { // have a worksheet
+		sheetName, cell = tokens[0], tokens[1]
+		operand = escapeSheetName(sheetName) + "!"
+	}
+	if sheet != sheetN && sheet != sheetName {
+		return operand + cell, err
+	}
+	for _, r := range cell {
+		if ('A' <= r && r <= 'Z') || ('a' <= r && r <= 'z') {
+			col += string(r)
+			continue
+		}
+		if '0' <= r && r <= '9' {
+			row += string(r)
+			if col != "" {
+				name, err := adjustFormulaColumnName(col, dir, num, offset)
+				if err != nil {
+					return operand, err
+				}
+				operand += name
+				col = ""
+			}
+			continue
+		}
+		if row, col, operand, err = adjustFormulaOperandRef(row, col, operand, dir, num, offset); err != nil {
+			return operand, err
+		}
+		operand += string(r)
+	}
+	_, _, operand, err = adjustFormulaOperandRef(row, col, operand, dir, num, offset)
+	return operand, err
+}
+
+// adjustFormulaRef returns adjusted formula by giving adjusting direction and
+// the base number of column or row, and offset.
+func (f *File) adjustFormulaRef(sheet, sheetN, formula string, dir adjustDirection, num, offset int) (string, error) {
+	var (
+		val          string
+		definedNames []string
+		ps           = efp.ExcelParser()
+	)
+	for _, definedName := range f.GetDefinedName() {
+		if definedName.Scope == "Workbook" || definedName.Scope == sheet {
+			definedNames = append(definedNames, definedName.Name)
+		}
+	}
+	for _, token := range ps.Parse(formula) {
+		if token.TType == efp.TokenTypeOperand && token.TSubType == efp.TokenSubTypeRange {
+			if inStrSlice(definedNames, token.TValue, true) != -1 {
+				val += token.TValue
+				continue
+			}
+			if strings.ContainsAny(token.TValue, "[]") {
+				val += token.TValue
+				continue
+			}
+			operand, err := f.adjustFormulaOperand(sheet, sheetN, token, dir, num, offset)
+			if err != nil {
+				return val, err
+			}
+			val += operand
+			continue
+		}
+		if isFunctionStart(token) {
+			val += token.TValue + string(efp.ParenOpen)
+			continue
+		}
+		if isFunctionStop(token) {
+			val += token.TValue + string(efp.ParenClose)
+			continue
+		}
+		if token.TType == efp.TokenTypeOperand && token.TSubType == efp.TokenSubTypeText {
+			val += string(efp.QuoteDouble) + strings.ReplaceAll(token.TValue, "\"", "\"\"") + string(efp.QuoteDouble)
+			continue
+		}
+		val += token.TValue
+	}
+	return val, nil
 }
 
 // adjustHyperlinks provides a function to update hyperlinks when inserting or
@@ -223,24 +467,15 @@ func (f *File) adjustHyperlinks(ws *xlsxWorksheet, sheet string, dir adjustDirec
 	}
 	for i := range ws.Hyperlinks.Hyperlink {
 		link := &ws.Hyperlinks.Hyperlink[i] // get reference
-		colNum, rowNum, _ := CellNameToCoordinates(link.Ref)
-		if dir == rows {
-			if rowNum >= num {
-				link.Ref, _ = CoordinatesToCellName(colNum, rowNum+offset)
-			}
-		} else {
-			if colNum >= num {
-				link.Ref, _ = CoordinatesToCellName(colNum+offset, rowNum)
-			}
-		}
+		link.Ref, _ = f.adjustFormulaRef(sheet, sheet, link.Ref, dir, num, offset)
 	}
 }
 
 // adjustTable provides a function to update the table when inserting or
 // deleting rows or columns.
-func (f *File) adjustTable(ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset int) {
+func (f *File) adjustTable(ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
 	if ws.TableParts == nil || len(ws.TableParts.TableParts) == 0 {
-		return
+		return nil
 	}
 	for idx := 0; idx < len(ws.TableParts.TableParts); idx++ {
 		tbl := ws.TableParts.TableParts[idx]
@@ -253,14 +488,14 @@ func (f *File) adjustTable(ws *xlsxWorksheet, sheet string, dir adjustDirection,
 		t := xlsxTable{}
 		if err := f.xmlNewDecoder(bytes.NewReader(namespaceStrictToTransitional(content.([]byte)))).
 			Decode(&t); err != nil && err != io.EOF {
-			return
+			return nil
 		}
 		coordinates, err := rangeRefToCoordinates(t.Ref)
 		if err != nil {
-			return
+			return err
 		}
 		// Remove the table when deleting the header row of the table
-		if dir == rows && num == coordinates[0] {
+		if dir == rows && num == coordinates[0] && offset == -1 {
 			ws.TableParts.TableParts = append(ws.TableParts.TableParts[:idx], ws.TableParts.TableParts[idx+1:]...)
 			ws.TableParts.Count = len(ws.TableParts.TableParts)
 			idx--
@@ -278,15 +513,18 @@ func (f *File) adjustTable(ws *xlsxWorksheet, sheet string, dir adjustDirection,
 		if t.AutoFilter != nil {
 			t.AutoFilter.Ref = t.Ref
 		}
-		_, _ = f.setTableHeader(sheet, true, x1, y1, x2)
+		_ = f.setTableColumns(sheet, true, x1, y1, x2, &t)
+		// Currently doesn't support query table
+		t.TableType, t.TotalsRowCount, t.ConnectionID = "", 0, 0
 		table, _ := xml.Marshal(t)
 		f.saveFileList(tableXML, table)
 	}
+	return nil
 }
 
 // adjustAutoFilter provides a function to update the auto filter when
 // inserting or deleting rows or columns.
-func (f *File) adjustAutoFilter(ws *xlsxWorksheet, dir adjustDirection, num, offset int) error {
+func (f *File) adjustAutoFilter(ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
 	if ws.AutoFilter == nil {
 		return nil
 	}
@@ -316,8 +554,8 @@ func (f *File) adjustAutoFilter(ws *xlsxWorksheet, dir adjustDirection, num, off
 }
 
 // adjustAutoFilterHelper provides a function for adjusting auto filter to
-// compare and calculate cell reference by the given adjust direction, operation
-// reference and offset.
+// compare and calculate cell reference by the giving adjusting direction,
+// operation reference and offset.
 func (f *File) adjustAutoFilterHelper(dir adjustDirection, coordinates []int, num, offset int) []int {
 	if dir == rows {
 		if coordinates[1] >= num {
@@ -339,7 +577,7 @@ func (f *File) adjustAutoFilterHelper(dir adjustDirection, coordinates []int, nu
 
 // adjustMergeCells provides a function to update merged cells when inserting
 // or deleting rows or columns.
-func (f *File) adjustMergeCells(ws *xlsxWorksheet, dir adjustDirection, num, offset int) error {
+func (f *File) adjustMergeCells(ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
 	if ws.MergeCells == nil {
 		return nil
 	}
@@ -358,7 +596,6 @@ func (f *File) adjustMergeCells(ws *xlsxWorksheet, dir adjustDirection, num, off
 		if dir == rows {
 			if y1 == num && y2 == num && offset < 0 {
 				f.deleteMergeCell(ws, i)
-				i--
 				continue
 			}
 
@@ -366,7 +603,6 @@ func (f *File) adjustMergeCells(ws *xlsxWorksheet, dir adjustDirection, num, off
 		} else {
 			if x1 == num && x2 == num && offset < 0 {
 				f.deleteMergeCell(ws, i)
-				i--
 				continue
 			}
 
@@ -422,13 +658,32 @@ func (f *File) deleteMergeCell(ws *xlsxWorksheet, idx int) {
 	}
 }
 
+// adjustCellName returns updated cell name by giving column/row number and
+// offset on inserting or deleting rows or columns.
+func adjustCellName(cell string, dir adjustDirection, c, r, offset int) (string, error) {
+	if dir == rows {
+		if rn := r + offset; rn > 0 {
+			return CoordinatesToCellName(c, rn)
+		}
+	}
+	return CoordinatesToCellName(c+offset, r)
+}
+
 // adjustCalcChain provides a function to update the calculation chain when
 // inserting or deleting rows or columns.
-func (f *File) adjustCalcChain(dir adjustDirection, num, offset, sheetID int) error {
+func (f *File) adjustCalcChain(ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
 	if f.CalcChain == nil {
 		return nil
 	}
-	for index, c := range f.CalcChain.C {
+	// If sheet ID is omitted, it is assumed to be the same as the i value of
+	// the previous cell.
+	var prevSheetID int
+	for i := 0; i < len(f.CalcChain.C); i++ {
+		c := f.CalcChain.C[i]
+		if c.I == 0 {
+			c.I = prevSheetID
+		}
+		prevSheetID = c.I
 		if c.I != sheetID {
 			continue
 		}
@@ -437,14 +692,194 @@ func (f *File) adjustCalcChain(dir adjustDirection, num, offset, sheetID int) er
 			return err
 		}
 		if dir == rows && num <= rowNum {
-			if newRow := rowNum + offset; newRow > 0 {
-				f.CalcChain.C[index].R, _ = CoordinatesToCellName(colNum, newRow)
+			if num == rowNum && offset == -1 {
+				_ = f.deleteCalcChain(c.I, c.R)
+				i--
+				continue
 			}
+			f.CalcChain.C[i].R, _ = adjustCellName(c.R, dir, colNum, rowNum, offset)
 		}
 		if dir == columns && num <= colNum {
-			if newCol := colNum + offset; newCol > 0 {
-				f.CalcChain.C[index].R, _ = CoordinatesToCellName(newCol, rowNum)
+			if num == colNum && offset == -1 {
+				_ = f.deleteCalcChain(c.I, c.R)
+				i--
+				continue
 			}
+			f.CalcChain.C[i].R, _ = adjustCellName(c.R, dir, colNum, rowNum, offset)
+		}
+	}
+	return nil
+}
+
+// adjustVolatileDepsTopic updates the volatile dependencies topic when
+// inserting or deleting rows or columns.
+func (vt *xlsxVolTypes) adjustVolatileDepsTopic(cell string, dir adjustDirection, indexes []int) (int, error) {
+	num, offset, i1, i2, i3, i4 := indexes[0], indexes[1], indexes[2], indexes[3], indexes[4], indexes[5]
+	colNum, rowNum, err := CellNameToCoordinates(cell)
+	if err != nil {
+		return i4, err
+	}
+	if dir == rows && num <= rowNum {
+		if num == rowNum && offset == -1 {
+			vt.deleteVolTopicRef(i1, i2, i3, i4)
+			i4--
+			return i4, err
+		}
+		vt.VolType[i1].Main[i2].Tp[i3].Tr[i4].R, _ = adjustCellName(cell, dir, colNum, rowNum, offset)
+	}
+	if dir == columns && num <= colNum {
+		if num == colNum && offset == -1 {
+			vt.deleteVolTopicRef(i1, i2, i3, i4)
+			i4--
+			return i4, err
+		}
+		if name, _ := adjustCellName(cell, dir, colNum, rowNum, offset); name != "" {
+			vt.VolType[i1].Main[i2].Tp[i3].Tr[i4].R, _ = adjustCellName(cell, dir, colNum, rowNum, offset)
+		}
+	}
+	return i4, err
+}
+
+// adjustVolatileDeps updates the volatile dependencies when inserting or
+// deleting rows or columns.
+func (f *File) adjustVolatileDeps(ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
+	volTypes, err := f.volatileDepsReader()
+	if err != nil || volTypes == nil {
+		return err
+	}
+	for i1 := 0; i1 < len(volTypes.VolType); i1++ {
+		for i2 := 0; i2 < len(volTypes.VolType[i1].Main); i2++ {
+			for i3 := 0; i3 < len(volTypes.VolType[i1].Main[i2].Tp); i3++ {
+				for i4 := 0; i4 < len(volTypes.VolType[i1].Main[i2].Tp[i3].Tr); i4++ {
+					ref := volTypes.VolType[i1].Main[i2].Tp[i3].Tr[i4]
+					if ref.S != sheetID {
+						continue
+					}
+					if i4, err = volTypes.adjustVolatileDepsTopic(ref.R, dir, []int{num, offset, i1, i2, i3, i4}); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// adjustDrawings updates the starting anchor of the two cell anchor pictures
+// and charts object when inserting or deleting rows or columns.
+func (from *xlsxFrom) adjustDrawings(dir adjustDirection, num, offset int, editAs string) (bool, error) {
+	var ok bool
+	if dir == columns && from.Col+1 >= num && from.Col+offset >= 0 {
+		if from.Col+offset >= MaxColumns {
+			return false, ErrColumnNumber
+		}
+		from.Col += offset
+		ok = editAs == "oneCell"
+	}
+	if dir == rows && from.Row+1 >= num && from.Row+offset >= 0 {
+		if from.Row+offset >= TotalRows {
+			return false, ErrMaxRows
+		}
+		from.Row += offset
+		ok = editAs == "oneCell"
+	}
+	return ok, nil
+}
+
+// adjustDrawings updates the ending anchor of the two cell anchor pictures
+// and charts object when inserting or deleting rows or columns.
+func (to *xlsxTo) adjustDrawings(dir adjustDirection, num, offset int, editAs string, ok bool) error {
+	if dir == columns && to.Col+1 >= num && to.Col+offset >= 0 && ok {
+		if to.Col+offset >= MaxColumns {
+			return ErrColumnNumber
+		}
+		to.Col += offset
+	}
+	if dir == rows && to.Row+1 >= num && to.Row+offset >= 0 && ok {
+		if to.Row+offset >= TotalRows {
+			return ErrMaxRows
+		}
+		to.Row += offset
+	}
+	return nil
+}
+
+// adjustDrawings updates the two cell anchor pictures and charts object when
+// inserting or deleting rows or columns.
+func (a *xdrCellAnchor) adjustDrawings(dir adjustDirection, num, offset int) error {
+	editAs := a.EditAs
+	if a.From == nil || a.To == nil || editAs == "absolute" {
+		return nil
+	}
+	ok, err := a.From.adjustDrawings(dir, num, offset, editAs)
+	if err != nil {
+		return err
+	}
+	return a.To.adjustDrawings(dir, num, offset, editAs, ok || editAs == "")
+}
+
+// adjustDrawings updates the existing two cell anchor pictures and charts
+// object when inserting or deleting rows or columns.
+func (a *xlsxCellAnchorPos) adjustDrawings(dir adjustDirection, num, offset int, editAs string) error {
+	if a.From == nil || a.To == nil || editAs == "absolute" {
+		return nil
+	}
+	ok, err := a.From.adjustDrawings(dir, num, offset, editAs)
+	if err != nil {
+		return err
+	}
+	return a.To.adjustDrawings(dir, num, offset, editAs, ok || editAs == "")
+}
+
+// adjustDrawings updates the pictures and charts object when inserting or
+// deleting rows or columns.
+func (f *File) adjustDrawings(ws *xlsxWorksheet, sheet string, dir adjustDirection, num, offset, sheetID int) error {
+	if ws.Drawing == nil {
+		return nil
+	}
+	target := f.getSheetRelationshipsTargetByID(sheet, ws.Drawing.RID)
+	drawingXML := strings.TrimPrefix(strings.ReplaceAll(target, "..", "xl"), "/")
+	var (
+		err  error
+		wsDr *xlsxWsDr
+	)
+	if wsDr, _, err = f.drawingParser(drawingXML); err != nil {
+		return err
+	}
+	anchorCb := func(a *xdrCellAnchor) error {
+		if a.GraphicFrame == "" {
+			return a.adjustDrawings(dir, num, offset)
+		}
+		deCellAnchor := decodeCellAnchor{}
+		deCellAnchorPos := decodeCellAnchorPos{}
+		_ = f.xmlNewDecoder(strings.NewReader("<decodeCellAnchor>" + a.GraphicFrame + "</decodeCellAnchor>")).Decode(&deCellAnchor)
+		_ = f.xmlNewDecoder(strings.NewReader("<decodeCellAnchorPos>" + a.GraphicFrame + "</decodeCellAnchorPos>")).Decode(&deCellAnchorPos)
+		xlsxCellAnchorPos := xlsxCellAnchorPos(deCellAnchorPos)
+		for i := 0; i < len(xlsxCellAnchorPos.AlternateContent); i++ {
+			xlsxCellAnchorPos.AlternateContent[i].XMLNSMC = SourceRelationshipCompatibility.Value
+		}
+		if deCellAnchor.From != nil {
+			xlsxCellAnchorPos.From = &xlsxFrom{
+				Col: deCellAnchor.From.Col, ColOff: deCellAnchor.From.ColOff,
+				Row: deCellAnchor.From.Row, RowOff: deCellAnchor.From.RowOff,
+			}
+		}
+		if deCellAnchor.To != nil {
+			xlsxCellAnchorPos.To = &xlsxTo{
+				Col: deCellAnchor.To.Col, ColOff: deCellAnchor.To.ColOff,
+				Row: deCellAnchor.To.Row, RowOff: deCellAnchor.To.RowOff,
+			}
+		}
+		if err = xlsxCellAnchorPos.adjustDrawings(dir, num, offset, a.EditAs); err != nil {
+			return err
+		}
+		cellAnchor, _ := xml.Marshal(xlsxCellAnchorPos)
+		a.GraphicFrame = strings.TrimSuffix(strings.TrimPrefix(string(cellAnchor), "<xlsxCellAnchorPos>"), "</xlsxCellAnchorPos>")
+		return err
+	}
+	for _, anchor := range wsDr.TwoCellAnchor {
+		if err = anchorCb(anchor); err != nil {
+			return err
 		}
 	}
 	return nil
