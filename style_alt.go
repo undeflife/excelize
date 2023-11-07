@@ -2,6 +2,13 @@ package excelize
 
 import "strings"
 
+func (f *File) isWindowColor(clr *xlsxColor) bool {
+	if clr == nil || clr.Theme == nil || f.Theme == nil {
+		return false
+	}
+	return *clr.Theme == 1
+}
+
 // getColorScheme according to specification L.4.3.2.3 Color Scheme
 // Dark 1 (dk1) – This represents a dark color, usually defined as a system text color
 // Light 1 (lt1) – This represents a light color, usually defined as the system window color
