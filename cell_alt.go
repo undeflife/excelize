@@ -92,7 +92,7 @@ func (f *File) formattedRichValue(c *xlsxC, raw bool, cellType CellType) (RichTe
 		font = styleSheet.Fonts.Font[*styleSheet.CellXfs.Xf[c.S].FontID]
 		// replace color rgb 
 		if font.Color != nil && !f.isWindowColor(font.Color) {
-			font.Color.RGB = f.getColorScheme(font.Color)
+			font.Color.RGB = f.getThemeColor(font.Color)
 		}
 	}
 
@@ -118,7 +118,7 @@ func (f *File) getCellRichText(si *xlsxSI) (runs []RichTextRun) {
 		}
 		if v.RPr != nil {
 			run.Font = newFont(v.RPr)
-			if run.Font.Color == "" {
+			if run.Font.Color == "" && !f.isWindowColor(v.RPr.Color) {
 				run.Font.Color = f.getThemeColor(v.RPr.Color)
 			}
 		}
