@@ -688,11 +688,11 @@ func (opts *Chart) parseTitle() {
 //
 //	Name
 //	Categories
-//	Sizes
 //	Values
 //	Fill
 //	Line
 //	Marker
+//	DataLabelPosition
 //
 // Name: Set the name for the series. The name is displayed in the chart legend
 // and in the formula bar. The 'Name' property is optional and if it isn't
@@ -703,13 +703,15 @@ func (opts *Chart) parseTitle() {
 // the same as the X axis. In most chart types the 'Categories' property is
 // optional and the chart will just assume a sequential series from 1..n.
 //
-// Sizes: This sets the bubble size in a data series.
-//
 // Values: This is the most important property of a series and is the only
 // mandatory option for every chart object. This option links the chart with
 // the worksheet data that it displays.
 //
-// Fill: This set the format for the data series fill.
+// Sizes: This sets the bubble size in a data series. The 'Sizes' property is
+// optional and the default value was same with 'Values'.
+//
+// Fill: This set the format for the data series fill. The 'Fill' property is
+// optional
 //
 // Line: This sets the line format of the line chart. The 'Line' property is
 // optional and if it isn't supplied it will default style. The options that
@@ -732,6 +734,8 @@ func (opts *Chart) parseTitle() {
 //	triangle
 //	x
 //	auto
+//
+// DataLabelPosition: This sets the position of the chart series data label.
 //
 // Set properties of the chart legend. The options that can be set are:
 //
@@ -776,11 +780,11 @@ func (opts *Chart) parseTitle() {
 // Specifies that each data marker in the series has a different color by
 // 'VaryColors'. The default value is true.
 //
-// Set chart offset, scale, aspect ratio setting and print settings by format,
+// Set chart offset, scale, aspect ratio setting and print settings by 'Format',
 // same as function 'AddPicture'.
 //
-// Set the position of the chart plot area by PlotArea. The properties that can
-// be set are:
+// Set the position of the chart plot area by 'PlotArea'. The properties that
+// can be set are:
 //
 //	SecondPlotValues
 //	ShowBubbleSize
@@ -789,6 +793,7 @@ func (opts *Chart) parseTitle() {
 //	ShowPercent
 //	ShowSerName
 //	ShowVal
+//	NumFmt
 //
 // SecondPlotValues: Specifies the values in second plot for the 'pieOfPie' and
 // 'barOfPie' chart.
@@ -810,6 +815,10 @@ func (opts *Chart) parseTitle() {
 //
 // ShowVal: Specifies that the value shall be shown in a data label.
 // The 'ShowVal' property is optional. The default value is false.
+//
+// NumFmt: Specifies that if linked to source and set custom number format code
+// for data labels. The 'NumFmt' property is optional. The default format code
+// is 'General'.
 //
 // Set the primary horizontal and vertical axis options by 'XAxis' and 'YAxis'.
 // The properties of 'XAxis' that can be set are:
@@ -891,6 +900,15 @@ func (opts *Chart) parseTitle() {
 // Set chart size by 'Dimension' property. The 'Dimension' property is optional.
 // The default width is 480, and height is 260.
 //
+// Set the bubble size in all data series for the bubble chart or 3D bubble
+// chart by 'BubbleSizes' property. The 'BubbleSizes' property is optional. The
+// default width is 100, and the value should be great than 0 and less or equal
+// than 300.
+//
+// Set the doughnut hole size in all data series for the doughnut chart by
+// 'HoleSize' property. The 'HoleSize' property is optional. The default width
+// is 75, and the value should be great than 0 and less or equal than 90.
+//
 // combo: Specifies the create a chart that combines two or more chart types in
 // a single chart. For example, create a clustered column - line chart with
 // data Sheet1!$E$1:$L$15:
@@ -923,7 +941,7 @@ func (opts *Chart) parseTitle() {
 //	    }
 //	    enable, disable := true, false
 //	    if err := f.AddChart("Sheet1", "E1", &excelize.Chart{
-//	        Type: "col",
+//	        Type: excelize.Col,
 //	        Series: []excelize.ChartSeries{
 //	            {
 //	                Name:       "Sheet1!$A$2",
@@ -957,7 +975,7 @@ func (opts *Chart) parseTitle() {
 //	            ShowVal:         true,
 //	        },
 //	    }, &excelize.Chart{
-//	        Type: "line",
+//	        Type: excelize.Line,
 //	        Series: []excelize.ChartSeries{
 //	            {
 //	                Name:       "Sheet1!$A$4",

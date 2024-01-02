@@ -260,6 +260,23 @@ func TestSetCellValue(t *testing.T) {
 	f.WorkBook = nil
 	f.Pkg.Store(defaultXMLPathWorkbook, MacintoshCyrillicCharset)
 	assert.EqualError(t, f.SetCellValue("Sheet1", "A1", time.Now().UTC()), "XML syntax error on line 1: invalid UTF-8")
+	// Test set cell value with the shared string table's count not equal with unique count
+	f = NewFile()
+	f.SharedStrings = nil
+	f.Pkg.Store(defaultXMLPathSharedStrings, []byte(fmt.Sprintf(`<sst xmlns="%s" count="2" uniqueCount="1"><si><t>a</t></si><si><t>a</t></si></sst>`, NameSpaceSpreadSheet.Value)))
+	f.Sheet.Store("xl/worksheets/sheet1.xml", &xlsxWorksheet{
+		SheetData: xlsxSheetData{Row: []xlsxRow{
+			{R: intPtr(1), C: []xlsxC{{R: "A1", T: "str", V: "1"}}},
+		}},
+	})
+	assert.NoError(t, f.SetCellValue("Sheet1", "A1", "b"))
+	val, err := f.GetCellValue("Sheet1", "A1")
+	assert.NoError(t, err)
+	assert.Equal(t, "b", val)
+	assert.NoError(t, f.SetCellValue("Sheet1", "B1", "b"))
+	val, err = f.GetCellValue("Sheet1", "B1")
+	assert.NoError(t, err)
+	assert.Equal(t, "b", val)
 }
 
 func TestSetCellValues(t *testing.T) {
@@ -358,9 +375,6 @@ func TestGetCellValue(t *testing.T) {
 	f.Sheet.Delete("xl/worksheets/sheet1.xml")
 	f.Pkg.Store("xl/worksheets/sheet1.xml", []byte(fmt.Sprintf(sheetData, `<row r="0"><c r="H6" t="inlineStr"><is><t>H6</t></is></c><c r="A1" t="inlineStr"><is><t>r0A6</t></is></c><c r="F4" t="inlineStr"><is><t>F4</t></is></c></row><row><c r="A1" t="inlineStr"><is><t>A6</t></is></c><c r="B1" t="inlineStr"><is><t>B6</t></is></c><c r="C1" t="inlineStr"><is><t>C6</t></is></c></row><row r="3"><c r="A3"><v>100</v></c><c r="B3" t="inlineStr"><is><t>B3</t></is></c></row>`)))
 	f.checked = sync.Map{}
-	cell, err = f.GetCellValue("Sheet1", "H6")
-	assert.Equal(t, "H6", cell)
-	assert.NoError(t, err)
 	rows, err = f.GetRows("Sheet1")
 	assert.Equal(t, [][]string{
 		{"A6", "B6", "C6"},
@@ -370,6 +384,19 @@ func TestGetCellValue(t *testing.T) {
 		nil,
 		{"", "", "", "", "", "", "", "H6"},
 	}, rows)
+	assert.NoError(t, err)
+	cell, err = f.GetCellValue("Sheet1", "H6")
+	assert.Equal(t, "H6", cell)
+	assert.NoError(t, err)
+
+	f.Sheet.Delete("xl/worksheets/sheet1.xml")
+	f.Pkg.Store("xl/worksheets/sheet1.xml", []byte(fmt.Sprintf(sheetData, `<row><c r="A1" t="inlineStr"><is><t>A1</t></is></c></row><row></row><row><c r="A3" t="inlineStr"><is><t>A3</t></is></c></row>`)))
+	f.checked = sync.Map{}
+	rows, err = f.GetRows("Sheet1")
+	assert.Equal(t, [][]string{{"A1"}, nil, {"A3"}}, rows)
+	assert.NoError(t, err)
+	cell, err = f.GetCellValue("Sheet1", "A3")
+	assert.Equal(t, "A3", cell)
 	assert.NoError(t, err)
 
 	f.Sheet.Delete("xl/worksheets/sheet1.xml")
@@ -675,26 +702,41 @@ func TestGetCellRichText(t *testing.T) {
 	runsSource[1].Font.Color = strings.ToUpper(runsSource[1].Font.Color)
 	assert.True(t, reflect.DeepEqual(runsSource[1].Font, runs[1].Font), "should get the same font")
 
-	// Test get cell rich text when string item index overflow
+	// Test get cell rich text with inlineStr
 	ws, ok := f.Sheet.Load("xl/worksheets/sheet1.xml")
 	assert.True(t, ok)
-	ws.(*xlsxWorksheet).SheetData.Row[0].C[0].V = "2"
+	ws.(*xlsxWorksheet).SheetData.Row[0].C[0] = xlsxC{
+		T: "inlineStr",
+		IS: &xlsxSI{
+			T: &xlsxT{Val: "A"},
+			R: []xlsxR{{T: &xlsxT{Val: "1"}}},
+		},
+	}
+	runs, err = f.GetCellRichText("Sheet1", "A1")
+	assert.NoError(t, err)
+	assert.Equal(t, []RichTextRun{{Text: "A"}, {Text: "1"}}, runs)
+
+	// Test get cell rich text when string item index overflow
+	ws, ok = f.Sheet.Load("xl/worksheets/sheet1.xml")
+	assert.True(t, ok)
+	ws.(*xlsxWorksheet).SheetData.Row[0].C[0] = xlsxC{V: "2", IS: &xlsxSI{}}
 	runs, err = f.GetCellRichText("Sheet1", "A1")
 	assert.NoError(t, err)
 	assert.Equal(t, 0, len(runs))
 	// Test get cell rich text when string item index is negative
 	ws, ok = f.Sheet.Load("xl/worksheets/sheet1.xml")
 	assert.True(t, ok)
-	ws.(*xlsxWorksheet).SheetData.Row[0].C[0].V = "-1"
+	ws.(*xlsxWorksheet).SheetData.Row[0].C[0] = xlsxC{T: "s", V: "-1", IS: &xlsxSI{}}
 	runs, err = f.GetCellRichText("Sheet1", "A1")
 	assert.NoError(t, err)
 	assert.Equal(t, 0, len(runs))
 	// Test get cell rich text on invalid string item index
 	ws, ok = f.Sheet.Load("xl/worksheets/sheet1.xml")
 	assert.True(t, ok)
-	ws.(*xlsxWorksheet).SheetData.Row[0].C[0].V = "x"
-	_, err = f.GetCellRichText("Sheet1", "A1")
-	assert.EqualError(t, err, "strconv.Atoi: parsing \"x\": invalid syntax")
+	ws.(*xlsxWorksheet).SheetData.Row[0].C[0] = xlsxC{V: "x"}
+	runs, err = f.GetCellRichText("Sheet1", "A1")
+	assert.NoError(t, err)
+	assert.Equal(t, 0, len(runs))
 	// Test set cell rich text on not exists worksheet
 	_, err = f.GetCellRichText("SheetN", "A1")
 	assert.EqualError(t, err, "sheet SheetN does not exist")

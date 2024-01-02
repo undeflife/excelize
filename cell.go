@@ -489,11 +489,11 @@ func (f *File) setSharedString(val string) (int, error) {
 	}
 	sst.mu.Lock()
 	defer sst.mu.Unlock()
-	sst.Count++
-	sst.UniqueCount++
 	t := xlsxT{Val: val}
 	val, t.Space = trimCellValue(val, false)
 	sst.SI = append(sst.SI, xlsxSI{T: &t})
+	sst.Count = len(sst.SI)
+	sst.UniqueCount = sst.Count
 	f.sharedStringsMap[val] = sst.UniqueCount - 1
 	return sst.UniqueCount - 1, nil
 }
@@ -547,7 +547,7 @@ func (c *xlsxC) setStr(val string) {
 	c.V, c.XMLSpace = trimCellValue(val, false)
 }
 
-// getCellDate parse cell value which containing a boolean.
+// getCellBool parse cell value which containing a boolean.
 func (c *xlsxC) getCellBool(f *File, raw bool) (string, error) {
 	if !raw {
 		if c.V == "1" {
@@ -971,6 +971,9 @@ func (f *File) SetCellHyperLink(sheet, cell, link, linkType string, opts ...Hype
 
 // getCellRichText returns rich text of cell by given string item.
 func getCellRichText(si *xlsxSI) (runs []RichTextRun) {
+	if si.T != nil {
+		runs = append(runs, RichTextRun{Text: si.T.Val})
+	}
 	for _, v := range si.R {
 		run := RichTextRun{
 			Text: v.T.Val,
@@ -992,6 +995,13 @@ func (f *File) GetCellRichText(sheet, cell string) (runs []RichTextRun, err erro
 	}
 	c, _, _, err := ws.prepareCell(cell)
 	if err != nil {
+		return
+	}
+	if c.T == "inlineStr" && c.IS != nil {
+		runs = getCellRichText(c.IS)
+		return
+	}
+	if c.T == "" {
 		return
 	}
 	siIdx, err := strconv.Atoi(c.V)
@@ -1335,8 +1345,8 @@ func (f *File) getCellStringFunc(sheet, cell string, fn func(x *xlsxWorksheet, c
 		return "", err
 	}
 	lastRowNum := 0
-	if l := len(ws.SheetData.Row); l > 0 {
-		lastRowNum = ws.SheetData.Row[l-1].R
+	if l := len(ws.SheetData.Row); l > 0 && ws.SheetData.Row[l-1].R != nil {
+		lastRowNum = *ws.SheetData.Row[l-1].R
 	}
 
 	// keep in mind: row starts from 1
@@ -1346,7 +1356,7 @@ func (f *File) getCellStringFunc(sheet, cell string, fn func(x *xlsxWorksheet, c
 
 	for rowIdx := range ws.SheetData.Row {
 		rowData := &ws.SheetData.Row[rowIdx]
-		if rowData.R != row {
+		if rowData.R != nil && *rowData.R != row {
 			continue
 		}
 		for colIdx := range rowData.C {

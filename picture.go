@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"image"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -467,14 +468,22 @@ func (f *File) GetPictures(sheet, cell string) ([]Picture, error) {
 	}
 	f.mu.Unlock()
 	if ws.Drawing == nil {
-		return nil, err
+		return f.getCellImages(sheet, cell)
 	}
 	target := f.getSheetRelationshipsTargetByID(sheet, ws.Drawing.RID)
 	drawingXML := strings.TrimPrefix(strings.ReplaceAll(target, "..", "xl"), "/")
 	drawingRelationships := strings.ReplaceAll(
 		strings.ReplaceAll(target, "../drawings", "xl/drawings/_rels"), ".xml", ".xml.rels")
 
-	return f.getPicture(row, col, drawingXML, drawingRelationships)
+	imgs, err := f.getCellImages(sheet, cell)
+	if err != nil {
+		return nil, err
+	}
+	pics, err := f.getPicture(row, col, drawingXML, drawingRelationships)
+	if err != nil {
+		return nil, err
+	}
+	return append(imgs, pics...), err
 }
 
 // GetPictureCells returns all picture cell references in a worksheet by a
@@ -488,14 +497,21 @@ func (f *File) GetPictureCells(sheet string) ([]string, error) {
 	}
 	f.mu.Unlock()
 	if ws.Drawing == nil {
-		return nil, err
+		return f.getEmbeddedImageCells(sheet)
 	}
 	target := f.getSheetRelationshipsTargetByID(sheet, ws.Drawing.RID)
 	drawingXML := strings.TrimPrefix(strings.ReplaceAll(target, "..", "xl"), "/")
 	drawingRelationships := strings.ReplaceAll(
 		strings.ReplaceAll(target, "../drawings", "xl/drawings/_rels"), ".xml", ".xml.rels")
-
-	return f.getPictureCells(drawingXML, drawingRelationships)
+	embeddedImageCells, err := f.getEmbeddedImageCells(sheet)
+	if err != nil {
+		return nil, err
+	}
+	imageCells, err := f.getPictureCells(drawingXML, drawingRelationships)
+	if err != nil {
+		return nil, err
+	}
+	return append(embeddedImageCells, imageCells...), err
 }
 
 // DeletePicture provides a function to delete all pictures in a cell by given
@@ -622,9 +638,10 @@ func (f *File) extractDecodeCellAnchor(anchor *xdrCellAnchor, drawingRelationshi
 	_ = f.xmlNewDecoder(strings.NewReader("<decodeCellAnchor>" + anchor.GraphicFrame + "</decodeCellAnchor>")).Decode(&deCellAnchor)
 	if deCellAnchor.From != nil && deCellAnchor.Pic != nil {
 		if cond(deCellAnchor.From) {
-			drawRel = f.getDrawingRelationships(drawingRelationships, deCellAnchor.Pic.BlipFill.Blip.Embed)
-			if _, ok := supportedImageTypes[strings.ToLower(filepath.Ext(drawRel.Target))]; ok {
-				cb(deCellAnchor, drawRel)
+			if drawRel = f.getDrawingRelationships(drawingRelationships, deCellAnchor.Pic.BlipFill.Blip.Embed); drawRel != nil {
+				if _, ok := supportedImageTypes[strings.ToLower(filepath.Ext(drawRel.Target))]; ok {
+					cb(deCellAnchor, drawRel)
+				}
 			}
 		}
 	}
@@ -739,4 +756,82 @@ func (f *File) getPictureCells(drawingXML, drawingRelationships string) ([]strin
 		f.extractCellAnchor(anchor, drawingRelationships, cond, cb, cond2, cb2)
 	}
 	return cells, err
+}
+
+// cellImagesReader provides a function to get the pointer to the structure
+// after deserialization of xl/cellimages.xml.
+func (f *File) cellImagesReader() (*decodeCellImages, error) {
+	if f.DecodeCellImages == nil {
+		f.DecodeCellImages = new(decodeCellImages)
+		if err := f.xmlNewDecoder(bytes.NewReader(namespaceStrictToTransitional(f.readXML(defaultXMLPathCellImages)))).
+			Decode(f.DecodeCellImages); err != nil && err != io.EOF {
+			return f.DecodeCellImages, err
+		}
+	}
+	return f.DecodeCellImages, nil
+}
+
+// getEmbeddedImageCells returns all the Kingsoft WPS Office embedded image
+// cells reference by given worksheet name.
+func (f *File) getEmbeddedImageCells(sheet string) ([]string, error) {
+	var (
+		err   error
+		cells []string
+	)
+	ws, err := f.workSheetReader(sheet)
+	if err != nil {
+		return cells, err
+	}
+	for _, row := range ws.SheetData.Row {
+		for _, c := range row.C {
+			if c.F != nil && c.F.Content != "" &&
+				strings.HasPrefix(strings.TrimPrefix(strings.TrimPrefix(c.F.Content, "="), "_xlfn."), "DISPIMG") {
+				if _, err = f.CalcCellValue(sheet, c.R); err != nil {
+					return cells, err
+				}
+				cells = append(cells, c.R)
+			}
+		}
+	}
+	return cells, err
+}
+
+// getCellImages provides a function to get the Kingsoft WPS Office embedded
+// cell images by given worksheet name and cell reference.
+func (f *File) getCellImages(sheet, cell string) ([]Picture, error) {
+	formula, err := f.GetCellFormula(sheet, cell)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(strings.TrimPrefix(strings.TrimPrefix(formula, "="), "_xlfn."), "DISPIMG") {
+		return nil, err
+	}
+	imgID, err := f.CalcCellValue(sheet, cell)
+	if err != nil {
+		return nil, err
+	}
+	cellImages, err := f.cellImagesReader()
+	if err != nil {
+		return nil, err
+	}
+	rels, err := f.relsReader(defaultXMLPathCellImagesRels)
+	if rels == nil {
+		return nil, err
+	}
+	var pics []Picture
+	for _, cellImg := range cellImages.CellImage {
+		if cellImg.Pic.NvPicPr.CNvPr.Name == imgID {
+			for _, r := range rels.Relationships {
+				if r.ID == cellImg.Pic.BlipFill.Blip.Embed {
+					pic := Picture{Extension: filepath.Ext(r.Target), Format: &GraphicOptions{}}
+					if buffer, _ := f.Pkg.Load("xl/" + r.Target); buffer != nil {
+						pic.File = buffer.([]byte)
+						pic.Format.AltText = cellImg.Pic.NvPicPr.CNvPr.Descr
+						pics = append(pics, pic)
+					}
+				}
+			}
+		}
+	}
+	return pics, err
 }

@@ -1289,6 +1289,32 @@ func (f *File) SetHeaderFooter(sheet string, opts *HeaderFooterOptions) error {
 	return err
 }
 
+// GetHeaderFooter provides a function to get worksheet header and footer by
+// given worksheet name.
+func (f *File) GetHeaderFooter(sheet string) (*HeaderFooterOptions, error) {
+	var opts *HeaderFooterOptions
+	ws, err := f.workSheetReader(sheet)
+	if err != nil {
+		return opts, err
+	}
+	if ws.HeaderFooter == nil {
+		return opts, err
+	}
+	opts = &HeaderFooterOptions{
+		AlignWithMargins: ws.HeaderFooter.AlignWithMargins,
+		DifferentFirst:   ws.HeaderFooter.DifferentFirst,
+		DifferentOddEven: ws.HeaderFooter.DifferentOddEven,
+		ScaleWithDoc:     ws.HeaderFooter.ScaleWithDoc,
+		OddHeader:        ws.HeaderFooter.OddHeader,
+		OddFooter:        ws.HeaderFooter.OddFooter,
+		EvenHeader:       ws.HeaderFooter.EvenHeader,
+		EvenFooter:       ws.HeaderFooter.EvenFooter,
+		FirstHeader:      ws.HeaderFooter.FirstHeader,
+		FirstFooter:      ws.HeaderFooter.FirstFooter,
+	}
+	return opts, err
+}
+
 // ProtectSheet provides a function to prevent other users from accidentally or
 // deliberately changing, moving, or deleting data in a worksheet. The
 // optional field AlgorithmName specified hash algorithm, support XOR, MD4,
@@ -1925,7 +1951,7 @@ func (ws *xlsxWorksheet) prepareSheetXML(col int, row int) {
 	if rowCount < row {
 		// append missing rows
 		for rowIdx := rowCount; rowIdx < row; rowIdx++ {
-			ws.SheetData.Row = append(ws.SheetData.Row, xlsxRow{R: rowIdx + 1, CustomHeight: customHeight, Ht: ht, C: make([]xlsxC, 0, sizeHint)})
+			ws.SheetData.Row = append(ws.SheetData.Row, xlsxRow{R: intPtr(rowIdx + 1), CustomHeight: customHeight, Ht: ht, C: make([]xlsxC, 0, sizeHint)})
 		}
 	}
 	rowData := &ws.SheetData.Row[row-1]
