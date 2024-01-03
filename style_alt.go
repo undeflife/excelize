@@ -9,19 +9,25 @@ func (f *File) isWindowColor(clr *xlsxColor) bool {
 	return *clr.Theme == 1
 }
 
-// getColorScheme according to specification L.4.3.2.3 Color Scheme
-// Dark 1 (dk1) – This represents a dark color, usually defined as a system text color
-// Light 1 (lt1) – This represents a light color, usually defined as the system window color
-// Dark 2 (dk2) – This represents a second dark color for use
-// Light 2 (lt2) – This represents a second light color for use
-// Accents 1 through 6 (accent1 through accent6) – These are six colors which can be used as
-// accent colors in the theme
-// Hyperlink (hlink) – The color of hyperlinks
-// Followed Hyperlink (folHlink) – The color of a followed hyperlink
-func (f *File) getColorScheme(clr *xlsxColor) string {
-	var rgb string
+// getThemeColorIgnoreFew Color Scheme but dt1 and lt1 will be ignored
+func (f *File) getThemeColorIgnoreFew(clr *xlsxColor) string {
+	var RGB string
 	if clr == nil || f.Theme == nil {
-		return rgb
+		return RGB
+	}
+	if clrScheme := f.Theme.ThemeElements.ClrScheme; clr.Theme != nil {
+		if val, ok := map[int]*string{
+			2: clrScheme.Lt2.SrgbClr.Val,
+			3: clrScheme.Dk2.SrgbClr.Val,
+			4: clrScheme.Accent1.SrgbClr.Val,
+			5: clrScheme.Accent2.SrgbClr.Val,
+			6: clrScheme.Accent3.SrgbClr.Val,
+			7: clrScheme.Accent4.SrgbClr.Val,
+			8: clrScheme.Accent5.SrgbClr.Val,
+			9: clrScheme.Accent6.SrgbClr.Val,
+		}[*clr.Theme]; ok && val != nil {
+			return strings.TrimPrefix(ThemeColor(*val, clr.Tint), "FF")
+		}
 	}
 	if len(clr.RGB) == 6 {
 		return clr.RGB
@@ -29,35 +35,11 @@ func (f *File) getColorScheme(clr *xlsxColor) string {
 	if len(clr.RGB) == 8 {
 		return strings.TrimPrefix(clr.RGB, "FF")
 	}
-	switch *clr.Theme {
-	case 0:
-		if f.Theme.ThemeElements.ClrScheme.Dk1.SysClr != nil {
-			rgb = f.Theme.ThemeElements.ClrScheme.Dk1.SysClr.LastClr
-		}
-	case 1:
-		if f.Theme.ThemeElements.ClrScheme.Lt1.SysClr != nil {
-			rgb = f.Theme.ThemeElements.ClrScheme.Lt1.SysClr.LastClr
-		}
-	case 2:
-		rgb = *f.Theme.ThemeElements.ClrScheme.Dk2.SrgbClr.Val
-	case 3:
-		rgb = *f.Theme.ThemeElements.ClrScheme.Lt2.SrgbClr.Val
-	case 4:
-		rgb = *f.Theme.ThemeElements.ClrScheme.Accent1.SrgbClr.Val
-	case 5:
-		rgb = *f.Theme.ThemeElements.ClrScheme.Accent2.SrgbClr.Val
-	case 6:
-		rgb = *f.Theme.ThemeElements.ClrScheme.Accent3.SrgbClr.Val
-	case 7:
-		rgb = *f.Theme.ThemeElements.ClrScheme.Accent4.SrgbClr.Val
-	case 8:
-		rgb = *f.Theme.ThemeElements.ClrScheme.Accent5.SrgbClr.Val
-	case 9:
-		rgb = *f.Theme.ThemeElements.ClrScheme.Accent6.SrgbClr.Val
-	case 10:
-		rgb = *f.Theme.ThemeElements.ClrScheme.Hlink.SrgbClr.Val
-	case 11:
-		rgb = *f.Theme.ThemeElements.ClrScheme.FolHlink.SrgbClr.Val
+	if f.Styles.Colors != nil && f.Styles.Colors.IndexedColors != nil && clr.Indexed < len(f.Styles.Colors.IndexedColors.RgbColor) {
+		return strings.TrimPrefix(ThemeColor(strings.TrimPrefix(f.Styles.Colors.IndexedColors.RgbColor[clr.Indexed].RGB, "FF"), clr.Tint), "FF")
 	}
-	return strings.TrimPrefix(ThemeColor(rgb, clr.Tint), "FF")
+	if clr.Indexed < len(IndexedColorMapping) {
+		return strings.TrimPrefix(ThemeColor(IndexedColorMapping[clr.Indexed], clr.Tint), "FF")
+	}
+	return RGB
 }
