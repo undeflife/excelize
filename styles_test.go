@@ -178,6 +178,10 @@ func TestSetConditionalFormat(t *testing.T) {
 		assert.NoError(t, f.SetConditionalFormat("Sheet1", ref, condFmts))
 	}
 	f = NewFile()
+	// Test creating a conditional format without cell reference
+	assert.Equal(t, ErrParameterRequired, f.SetConditionalFormat("Sheet1", "", nil))
+	// Test creating a conditional format with invalid cell reference
+	assert.Equal(t, ErrParameterInvalid, f.SetConditionalFormat("Sheet1", "A1:A2:A3", nil))
 	// Test creating a conditional format with existing extension lists
 	ws, ok := f.Sheet.Load("xl/worksheets/sheet1.xml")
 	assert.True(t, ok)
@@ -272,11 +276,11 @@ func TestGetConditionalFormats(t *testing.T) {
 		{{Type: "icon_set", IconStyle: "3Arrows", ReverseIcons: true, IconsOnly: true}},
 	} {
 		f := NewFile()
-		err := f.SetConditionalFormat("Sheet1", "A2:A1", format)
+		err := f.SetConditionalFormat("Sheet1", "A2:A1,B:B,2:2", format)
 		assert.NoError(t, err)
 		opts, err := f.GetConditionalFormats("Sheet1")
 		assert.NoError(t, err)
-		assert.Equal(t, format, opts["A1:A2"])
+		assert.Equal(t, format, opts["A2:A1 B1:B1048576 A2:XFD2"])
 	}
 	// Test get multiple conditional formats
 	f := NewFile()
@@ -337,7 +341,16 @@ func TestNewStyle(t *testing.T) {
 	_, err = f.NewStyle(nil)
 	assert.NoError(t, err)
 
+	// Test gradient fills
+	f = NewFile()
+	styleID1, err := f.NewStyle(&Style{Fill: Fill{Type: "gradient", Color: []string{"FFFFFF", "4E71BE"}, Shading: 1, Pattern: 1}})
+	assert.NoError(t, err)
+	styleID2, err := f.NewStyle(&Style{Fill: Fill{Type: "gradient", Color: []string{"FF0000", "4E71BE"}, Shading: 1, Pattern: 1}})
+	assert.NoError(t, err)
+	assert.NotEqual(t, styleID1, styleID2)
+
 	var exp string
+	f = NewFile()
 	_, err = f.NewStyle(&Style{CustomNumFmt: &exp})
 	assert.Equal(t, ErrCustomNumFmt, err)
 	_, err = f.NewStyle(&Style{Font: &Font{Family: strings.Repeat("s", MaxFontFamilyLength+1)}})
@@ -352,7 +365,7 @@ func TestNewStyle(t *testing.T) {
 		CustomNumFmt: &numFmt,
 	})
 	assert.NoError(t, err)
-	assert.Equal(t, 2, styleID)
+	assert.Equal(t, 1, styleID)
 
 	assert.NotNil(t, f.Styles)
 	assert.NotNil(t, f.Styles.CellXfs)
@@ -367,7 +380,7 @@ func TestNewStyle(t *testing.T) {
 		NumFmt: 32, // must not be in currencyNumFmt
 	})
 	assert.NoError(t, err)
-	assert.Equal(t, 3, styleID)
+	assert.Equal(t, 2, styleID)
 
 	assert.NotNil(t, f.Styles)
 	assert.NotNil(t, f.Styles.CellXfs)
@@ -443,7 +456,8 @@ func TestConditionalStyle(t *testing.T) {
 	assert.NoError(t, err)
 	style, err = f.GetConditionalStyle(idx)
 	assert.NoError(t, err)
-	assert.Equal(t, expected, style)
+	assert.Equal(t, expected.NumFmt, style.NumFmt)
+	assert.Zero(t, *style.DecimalPlaces)
 	_, err = f.NewConditionalStyle(&Style{NumFmt: 27})
 	assert.NoError(t, err)
 	numFmt := "general"
@@ -641,6 +655,7 @@ func TestGetStyle(t *testing.T) {
 	assert.Equal(t, expected.Alignment, style.Alignment)
 	assert.Equal(t, expected.Protection, style.Protection)
 	assert.Equal(t, expected.NumFmt, style.NumFmt)
+	assert.Nil(t, style.DecimalPlaces)
 
 	expected = &Style{
 		Fill: Fill{Type: "pattern", Pattern: 1, Color: []string{"0000FF"}},
@@ -650,6 +665,15 @@ func TestGetStyle(t *testing.T) {
 	style, err = f.GetStyle(styleID)
 	assert.NoError(t, err)
 	assert.Equal(t, expected.Fill, style.Fill)
+	assert.Nil(t, style.DecimalPlaces)
+
+	expected = &Style{NumFmt: 2}
+	styleID, err = f.NewStyle(expected)
+	assert.NoError(t, err)
+	style, err = f.GetStyle(styleID)
+	assert.NoError(t, err)
+	assert.Equal(t, expected.NumFmt, style.NumFmt)
+	assert.Equal(t, 2, *style.DecimalPlaces)
 
 	expected = &Style{NumFmt: 27}
 	styleID, err = f.NewStyle(expected)
@@ -657,6 +681,7 @@ func TestGetStyle(t *testing.T) {
 	style, err = f.GetStyle(styleID)
 	assert.NoError(t, err)
 	assert.Equal(t, expected.NumFmt, style.NumFmt)
+	assert.Nil(t, style.DecimalPlaces)
 
 	expected = &Style{NumFmt: 165}
 	styleID, err = f.NewStyle(expected)
@@ -664,13 +689,50 @@ func TestGetStyle(t *testing.T) {
 	style, err = f.GetStyle(styleID)
 	assert.NoError(t, err)
 	assert.Equal(t, expected.NumFmt, style.NumFmt)
+	assert.Equal(t, 2, *style.DecimalPlaces)
 
-	expected = &Style{NumFmt: 165, NegRed: true}
+	decimal := 4
+	expected = &Style{NumFmt: 165, DecimalPlaces: &decimal, NegRed: true}
 	styleID, err = f.NewStyle(expected)
 	assert.NoError(t, err)
 	style, err = f.GetStyle(styleID)
 	assert.NoError(t, err)
-	assert.Equal(t, expected.NumFmt, style.NumFmt)
+	assert.Equal(t, 0, style.NumFmt)
+	assert.Equal(t, *expected.DecimalPlaces, *style.DecimalPlaces)
+	assert.Equal(t, "[$$-409]#,##0.0000;[Red][$$-409]#,##0.0000", *style.CustomNumFmt)
+
+	for _, val := range [][]interface{}{
+		{"$#,##0", 0},
+		{"$#,##0.0", 1},
+		{"_($* #,##0_);_($* (#,##0);_($* \"-\"_);_(@_)", 0},
+		{"_($* #,##000_);_($* (#,##000);_($* \"-\"_);_(@_)", 0},
+		{"_($* #,##0.0000_);_($* (#,##0.0000);_($* \"-\"????_);_(@_)", 4},
+	} {
+		numFmtCode := val[0].(string)
+		expected = &Style{CustomNumFmt: &numFmtCode}
+		styleID, err = f.NewStyle(expected)
+		assert.NoError(t, err)
+		style, err = f.GetStyle(styleID)
+		assert.NoError(t, err)
+		assert.Equal(t, val[1].(int), *style.DecimalPlaces, numFmtCode)
+	}
+
+	for _, val := range []string{
+		";$#,##0",
+		";$#,##0;",
+		";$#,##0.0",
+		";$#,##0.0;",
+		"$#,##0;0.0",
+		"_($* #,##0_);;_($* \"-\"_);_(@_)",
+		"_($* #,##0.0_);_($* (#,##0.00);_($* \"-\"_);_(@_)",
+	} {
+		expected = &Style{CustomNumFmt: &val}
+		styleID, err = f.NewStyle(expected)
+		assert.NoError(t, err)
+		style, err = f.GetStyle(styleID)
+		assert.NoError(t, err)
+		assert.Nil(t, style.DecimalPlaces)
+	}
 
 	// Test get style with custom color index
 	f.Styles.Colors = &xlsxStyleColors{
