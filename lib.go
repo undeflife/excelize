@@ -323,7 +323,7 @@ func sortCoordinates(coordinates []int) error {
 
 // coordinatesToRangeRef provides a function to convert a pair of coordinates
 // to range reference.
-func (f *File) coordinatesToRangeRef(coordinates []int, abs ...bool) (string, error) {
+func coordinatesToRangeRef(coordinates []int, abs ...bool) (string, error) {
 	if len(coordinates) != 4 {
 		return "", ErrCoordinates
 	}
@@ -360,7 +360,7 @@ func (f *File) getDefinedNameRefTo(definedNameName, currentSheet string) (refTo 
 }
 
 // flatSqref convert reference sequence to cell reference list.
-func (f *File) flatSqref(sqref string) (cells map[int][][]int, err error) {
+func flatSqref(sqref string) (cells map[int][][]int, err error) {
 	var coordinates []int
 	cells = make(map[int][][]int)
 	for _, ref := range strings.Fields(sqref) {
@@ -646,6 +646,11 @@ func getRootElement(d *xml.Decoder) []xml.Attr {
 		case xml.StartElement:
 			tokenIdx++
 			if tokenIdx == 1 {
+				for i := 0; i < len(startElement.Attr); i++ {
+					if startElement.Attr[i].Value == NameSpaceSpreadSheet.Value {
+						startElement.Attr[i] = NameSpaceSpreadSheet
+					}
+				}
 				return startElement.Attr
 			}
 		}

@@ -1136,7 +1136,7 @@ var (
 		},
 	}
 
-	// extractStyleCondFuncs provides a function set to returns if shoudle be
+	// extractStyleCondFuncs provides a function set to returns if should be
 	// extract style definition by given style.
 	extractStyleCondFuncs = map[string]func(xlsxXf, *xlsxStyleSheet) bool{
 		"fill": func(xf xlsxXf, s *xlsxStyleSheet) bool {
@@ -2186,19 +2186,22 @@ func setCellXfs(style *xlsxStyleSheet, fontID, numFmtID, fillID, borderID int, a
 }
 
 // GetCellStyle provides a function to get cell style index by given worksheet
-// name and cell reference.
+// name and cell reference. This function is concurrency safe.
 func (f *File) GetCellStyle(sheet, cell string) (int, error) {
+	f.mu.Lock()
 	ws, err := f.workSheetReader(sheet)
 	if err != nil {
+		f.mu.Unlock()
 		return 0, err
 	}
+	f.mu.Unlock()
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
 	col, row, err := CellNameToCoordinates(cell)
 	if err != nil {
 		return 0, err
 	}
 	ws.prepareSheetXML(col, row)
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
 	return ws.prepareCellStyle(col, row, ws.SheetData.Row[row-1].C[col-1].S), err
 }
 
@@ -2445,7 +2448,7 @@ func (f *File) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID 
 //	        {
 //	            Type:     "cell",
 //	            Criteria: ">",
-//	            Format:   format,
+//	            Format:   &format,
 //	            Value:    "6",
 //	        },
 //	    },
@@ -2458,7 +2461,7 @@ func (f *File) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID 
 //	        {
 //	            Type:     "cell",
 //	            Criteria: ">",
-//	            Format:   format,
+//	            Format:   &format,
 //	            Value:    "$C$1",
 //	        },
 //	    },
@@ -2482,7 +2485,7 @@ func (f *File) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID 
 //	}
 //	err = f.SetConditionalFormat("Sheet1", "D1:D10",
 //	    []excelize.ConditionalFormatOptions{
-//	        {Type: "cell", Criteria: ">", Format: format, Value: "6"},
+//	        {Type: "cell", Criteria: ">", Format: &format, Value: "6"},
 //	    },
 //	)
 //
@@ -2534,7 +2537,7 @@ func (f *File) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID 
 //	        {
 //	            Type:     "cell",
 //	            Criteria: "between",
-//	            Format:   format,
+//	            Format:   &format,
 //	            MinValue: 6",
 //	            MaxValue: 8",
 //	        },
@@ -2554,7 +2557,7 @@ func (f *File) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID 
 //	        {
 //	            Type:         "average",
 //	            Criteria:     "=",
-//	            Format:       format1,
+//	            Format:       &format1,
 //	            AboveAverage: true,
 //	        },
 //	    },
@@ -2566,7 +2569,7 @@ func (f *File) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID 
 //	        {
 //	            Type:         "average",
 //	            Criteria:     "=",
-//	            Format:       format2,
+//	            Format:       &format2,
 //	            AboveAverage: false,
 //	        },
 //	    },
@@ -2578,7 +2581,7 @@ func (f *File) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID 
 //	// Highlight cells rules: Duplicate Values...
 //	err := f.SetConditionalFormat("Sheet1", "A1:A10",
 //	    []excelize.ConditionalFormatOptions{
-//	        {Type: "duplicate", Criteria: "=", Format: format},
+//	        {Type: "duplicate", Criteria: "=", Format: &format},
 //	    },
 //	)
 //
@@ -2587,7 +2590,7 @@ func (f *File) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID 
 //	// Highlight cells rules: Not Equal To...
 //	err := f.SetConditionalFormat("Sheet1", "A1:A10",
 //	    []excelize.ConditionalFormatOptions{
-//	        {Type: "unique", Criteria: "=", Format: format},
+//	        {Type: "unique", Criteria: "=", Format: &format},
 //	    },
 //	)
 //
@@ -2600,7 +2603,7 @@ func (f *File) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID 
 //	        {
 //	            Type:     "top",
 //	            Criteria: "=",
-//	            Format:   format,
+//	            Format:   &format,
 //	            Value:    "6",
 //	        },
 //	    },
@@ -2613,7 +2616,7 @@ func (f *File) SetCellStyle(sheet, topLeftCell, bottomRightCell string, styleID 
 //	        {
 //	            Type:     "top",
 //	            Criteria: "=",
-//	            Format:   format,
+//	            Format:   &format,
 //	            Value:    "6",
 //	            Percent:  true,
 //	        },
@@ -2931,10 +2934,7 @@ func (f *File) appendCfRule(ws *xlsxWorksheet, rule *xlsxX14CfRule) error {
 // settings for cell value (include between, not between, equal, not equal,
 // greater than and less than) by given conditional formatting rule.
 func (f *File) extractCondFmtCellIs(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
-	format := ConditionalFormatOptions{StopIfTrue: c.StopIfTrue, Type: "cell", Criteria: operatorType[c.Operator]}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
-	}
+	format := ConditionalFormatOptions{Format: c.DxfID, StopIfTrue: c.StopIfTrue, Type: "cell", Criteria: operatorType[c.Operator]}
 	if len(c.Formula) == 2 {
 		format.MinValue, format.MaxValue = c.Formula[0], c.Formula[1]
 		return format
@@ -2946,21 +2946,13 @@ func (f *File) extractCondFmtCellIs(c *xlsxCfRule, extLst *xlsxExtLst) Condition
 // extractCondFmtTimePeriod provides a function to extract conditional format
 // settings for time period by given conditional formatting rule.
 func (f *File) extractCondFmtTimePeriod(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
-	format := ConditionalFormatOptions{StopIfTrue: c.StopIfTrue, Type: "time_period", Criteria: operatorType[c.Operator]}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
-	}
-	return format
+	return ConditionalFormatOptions{Format: c.DxfID, StopIfTrue: c.StopIfTrue, Type: "time_period", Criteria: operatorType[c.Operator]}
 }
 
 // extractCondFmtText provides a function to extract conditional format
 // settings for text cell values by given conditional formatting rule.
 func (f *File) extractCondFmtText(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
-	format := ConditionalFormatOptions{StopIfTrue: c.StopIfTrue, Type: "text", Criteria: operatorType[c.Operator], Value: c.Text}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
-	}
-	return format
+	return ConditionalFormatOptions{Format: c.DxfID, StopIfTrue: c.StopIfTrue, Type: "text", Criteria: operatorType[c.Operator], Value: c.Text}
 }
 
 // extractCondFmtTop10 provides a function to extract conditional format
@@ -2968,14 +2960,12 @@ func (f *File) extractCondFmtText(c *xlsxCfRule, extLst *xlsxExtLst) Conditional
 // rule.
 func (f *File) extractCondFmtTop10(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
 	format := ConditionalFormatOptions{
+		Format:     c.DxfID,
 		StopIfTrue: c.StopIfTrue,
 		Type:       "top",
 		Criteria:   "=",
 		Percent:    c.Percent,
 		Value:      strconv.Itoa(c.Rank),
-	}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
 	}
 	if c.Bottom {
 		format.Type = "bottom"
@@ -2988,12 +2978,10 @@ func (f *File) extractCondFmtTop10(c *xlsxCfRule, extLst *xlsxExtLst) Conditiona
 // rule.
 func (f *File) extractCondFmtAboveAverage(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
 	format := ConditionalFormatOptions{
+		Format:     c.DxfID,
 		StopIfTrue: c.StopIfTrue,
 		Type:       "average",
 		Criteria:   "=",
-	}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
 	}
 	if c.AboveAverage != nil {
 		format.AboveAverage = *c.AboveAverage
@@ -3005,7 +2993,8 @@ func (f *File) extractCondFmtAboveAverage(c *xlsxCfRule, extLst *xlsxExtLst) Con
 // conditional format settings for duplicate and unique values by given
 // conditional formatting rule.
 func (f *File) extractCondFmtDuplicateUniqueValues(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
-	format := ConditionalFormatOptions{
+	return ConditionalFormatOptions{
+		Format:     c.DxfID,
 		StopIfTrue: c.StopIfTrue,
 		Type: map[string]string{
 			"duplicateValues": "duplicate",
@@ -3013,62 +3002,46 @@ func (f *File) extractCondFmtDuplicateUniqueValues(c *xlsxCfRule, extLst *xlsxEx
 		}[c.Type],
 		Criteria: "=",
 	}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
-	}
-	return format
 }
 
 // extractCondFmtBlanks provides a function to extract conditional format
 // settings for blank cells by given conditional formatting rule.
 func (f *File) extractCondFmtBlanks(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
-	format := ConditionalFormatOptions{
+	return ConditionalFormatOptions{
+		Format:     c.DxfID,
 		StopIfTrue: c.StopIfTrue,
 		Type:       "blanks",
 	}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
-	}
-	return format
 }
 
 // extractCondFmtNoBlanks provides a function to extract conditional format
 // settings for no blank cells by given conditional formatting rule.
 func (f *File) extractCondFmtNoBlanks(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
-	format := ConditionalFormatOptions{
+	return ConditionalFormatOptions{
+		Format:     c.DxfID,
 		StopIfTrue: c.StopIfTrue,
 		Type:       "no_blanks",
 	}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
-	}
-	return format
 }
 
 // extractCondFmtErrors provides a function to extract conditional format
 // settings for cells with errors by given conditional formatting rule.
 func (f *File) extractCondFmtErrors(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
-	format := ConditionalFormatOptions{
+	return ConditionalFormatOptions{
+		Format:     c.DxfID,
 		StopIfTrue: c.StopIfTrue,
 		Type:       "errors",
 	}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
-	}
-	return format
 }
 
 // extractCondFmtNoErrors provides a function to extract conditional format
 // settings for cells without errors by given conditional formatting rule.
 func (f *File) extractCondFmtNoErrors(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
-	format := ConditionalFormatOptions{
+	return ConditionalFormatOptions{
+		Format:     c.DxfID,
 		StopIfTrue: c.StopIfTrue,
 		Type:       "no_errors",
 	}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
-	}
-	return format
 }
 
 // extractCondFmtColorScale provides a function to extract conditional format
@@ -3165,10 +3138,7 @@ func (f *File) extractCondFmtDataBar(c *xlsxCfRule, extLst *xlsxExtLst) Conditio
 // extractCondFmtExp provides a function to extract conditional format settings
 // for expression by given conditional formatting rule.
 func (f *File) extractCondFmtExp(c *xlsxCfRule, extLst *xlsxExtLst) ConditionalFormatOptions {
-	format := ConditionalFormatOptions{StopIfTrue: c.StopIfTrue, Type: "formula"}
-	if c.DxfID != nil {
-		format.Format = *c.DxfID
-	}
+	format := ConditionalFormatOptions{Format: c.DxfID, StopIfTrue: c.StopIfTrue, Type: "formula"}
 	if len(c.Formula) > 0 {
 		format.Criteria = c.Formula[0]
 	}
@@ -3234,7 +3204,7 @@ func drawCondFmtCellIs(p int, ct, ref, GUID string, format *ConditionalFormatOpt
 		StopIfTrue: format.StopIfTrue,
 		Type:       validType[format.Type],
 		Operator:   ct,
-		DxfID:      intPtr(format.Format),
+		DxfID:      format.Format,
 	}
 	// "between" and "not between" criteria require 2 values.
 	if ct == "between" || ct == "notBetween" {
@@ -3268,7 +3238,7 @@ func drawCondFmtTimePeriod(p int, ct, ref, GUID string, format *ConditionalForma
 				"continue month": fmt.Sprintf("AND(MONTH(%[1]s)=MONTH(TODAY())+1,OR(YEAR(%[1]s)=YEAR(TODAY()),AND(MONTH(%[1]s)=12,YEAR(%[1]s)=YEAR(TODAY())+1)))", ref),
 			}[ct],
 		},
-		DxfID: intPtr(format.Format),
+		DxfID: format.Format,
 	}, nil
 }
 
@@ -3298,7 +3268,7 @@ func drawCondFmtText(p int, ct, ref, GUID string, format *ConditionalFormatOptio
 					strings.NewReplacer(`"`, `""`).Replace(format.Value), ref),
 			}[ct],
 		},
-		DxfID: intPtr(format.Format),
+		DxfID: format.Format,
 	}, nil
 }
 
@@ -3312,7 +3282,7 @@ func drawCondFmtTop10(p int, ct, ref, GUID string, format *ConditionalFormatOpti
 		Bottom:     format.Type == "bottom",
 		Type:       validType[format.Type],
 		Rank:       10,
-		DxfID:      intPtr(format.Format),
+		DxfID:      format.Format,
 		Percent:    format.Percent,
 	}
 	if rank, err := strconv.Atoi(format.Value); err == nil {
@@ -3330,7 +3300,7 @@ func drawCondFmtAboveAverage(p int, ct, ref, GUID string, format *ConditionalFor
 		StopIfTrue:   format.StopIfTrue,
 		Type:         validType[format.Type],
 		AboveAverage: boolPtr(format.AboveAverage),
-		DxfID:        intPtr(format.Format),
+		DxfID:        format.Format,
 	}, nil
 }
 
@@ -3342,7 +3312,7 @@ func drawCondFmtDuplicateUniqueValues(p int, ct, ref, GUID string, format *Condi
 		Priority:   p + 1,
 		StopIfTrue: format.StopIfTrue,
 		Type:       validType[format.Type],
-		DxfID:      intPtr(format.Format),
+		DxfID:      format.Format,
 	}, nil
 }
 
@@ -3430,7 +3400,7 @@ func drawCondFmtExp(p int, ct, ref, GUID string, format *ConditionalFormatOption
 		StopIfTrue: format.StopIfTrue,
 		Type:       validType[format.Type],
 		Formula:    []string{format.Criteria},
-		DxfID:      intPtr(format.Format),
+		DxfID:      format.Format,
 	}, nil
 }
 
@@ -3442,7 +3412,7 @@ func drawCondFmtErrors(p int, ct, ref, GUID string, format *ConditionalFormatOpt
 		StopIfTrue: format.StopIfTrue,
 		Type:       validType[format.Type],
 		Formula:    []string{fmt.Sprintf("ISERROR(%s)", ref)},
-		DxfID:      intPtr(format.Format),
+		DxfID:      format.Format,
 	}, nil
 }
 
@@ -3454,7 +3424,7 @@ func drawCondFmtNoErrors(p int, ct, ref, GUID string, format *ConditionalFormatO
 		StopIfTrue: format.StopIfTrue,
 		Type:       validType[format.Type],
 		Formula:    []string{fmt.Sprintf("NOT(ISERROR(%s))", ref)},
-		DxfID:      intPtr(format.Format),
+		DxfID:      format.Format,
 	}, nil
 }
 
@@ -3466,7 +3436,7 @@ func drawCondFmtBlanks(p int, ct, ref, GUID string, format *ConditionalFormatOpt
 		StopIfTrue: format.StopIfTrue,
 		Type:       validType[format.Type],
 		Formula:    []string{fmt.Sprintf("LEN(TRIM(%s))=0", ref)},
-		DxfID:      intPtr(format.Format),
+		DxfID:      format.Format,
 	}, nil
 }
 
@@ -3478,7 +3448,7 @@ func drawCondFmtNoBlanks(p int, ct, ref, GUID string, format *ConditionalFormatO
 		StopIfTrue: format.StopIfTrue,
 		Type:       validType[format.Type],
 		Formula:    []string{fmt.Sprintf("LEN(TRIM(%s))>0", ref)},
-		DxfID:      intPtr(format.Format),
+		DxfID:      format.Format,
 	}, nil
 }
 

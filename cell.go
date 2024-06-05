@@ -505,7 +505,9 @@ func trimCellValue(value string, escape bool) (v string, ns xml.Attr) {
 	}
 	if escape {
 		var buf bytes.Buffer
-		_ = xml.EscapeText(&buf, []byte(value))
+		enc := xml.NewEncoder(&buf)
+		_ = enc.EncodeToken(xml.CharData(value))
+		enc.Flush()
 		value = buf.String()
 	}
 	if len(value) > 0 {
@@ -1426,8 +1428,8 @@ func (f *File) getCellStringFunc(sheet, cell string, fn func(x *xlsxWorksheet, c
 		return "", err
 	}
 	lastRowNum := 0
-	if l := len(ws.SheetData.Row); l > 0 && ws.SheetData.Row[l-1].R != nil {
-		lastRowNum = *ws.SheetData.Row[l-1].R
+	if l := len(ws.SheetData.Row); l > 0 {
+		lastRowNum = ws.SheetData.Row[l-1].R
 	}
 
 	// keep in mind: row starts from 1
@@ -1437,7 +1439,7 @@ func (f *File) getCellStringFunc(sheet, cell string, fn func(x *xlsxWorksheet, c
 
 	for rowIdx := range ws.SheetData.Row {
 		rowData := &ws.SheetData.Row[rowIdx]
-		if rowData.R != nil && *rowData.R != row {
+		if rowData.R != row {
 			continue
 		}
 		for colIdx := range rowData.C {
@@ -1655,8 +1657,10 @@ func parseSharedFormula(dCol, dRow int, orig []byte) (res string, start int) {
 // Note that this function not validate ref tag to check the cell whether in
 // allow range reference, and always return origin shared formula.
 func getSharedFormula(ws *xlsxWorksheet, si int, cell string) string {
-	for _, r := range ws.SheetData.Row {
-		for _, c := range r.C {
+	for row := 0; row < len(ws.SheetData.Row); row++ {
+		r := &ws.SheetData.Row[row]
+		for column := 0; column < len(r.C); column++ {
+			c := &r.C[column]
 			if c.F != nil && c.F.Ref != "" && c.F.T == STCellFormulaTypeShared && c.F.Si != nil && *c.F.Si == si {
 				col, row, _ := CellNameToCoordinates(cell)
 				sharedCol, sharedRow, _ := CellNameToCoordinates(c.R)

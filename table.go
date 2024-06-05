@@ -350,7 +350,7 @@ func (f *File) addTable(sheet, tableXML string, x1, y1, x2, y2, i int, opts *Tab
 		y1++
 	}
 	// Correct table range reference, such correct C1:B3 to B1:C3.
-	ref, err := f.coordinatesToRangeRef([]int{x1, y1, x2, y2})
+	ref, err := coordinatesToRangeRef([]int{x1, y1, x2, y2})
 	if err != nil {
 		return err
 	}
@@ -463,7 +463,7 @@ func (f *File) AutoFilter(sheet, rangeRef string, opts []AutoFilterOptions) erro
 	}
 	_ = sortCoordinates(coordinates)
 	// Correct reference range, such correct C1:B3 to B1:C3.
-	ref, _ := f.coordinatesToRangeRef(coordinates, true)
+	ref, _ := coordinatesToRangeRef(coordinates, true)
 	wb, err := f.workbookReader()
 	if err != nil {
 		return err
@@ -474,7 +474,7 @@ func (f *File) AutoFilter(sheet, rangeRef string, opts []AutoFilterOptions) erro
 	}
 	filterRange := fmt.Sprintf("'%s'!%s", sheet, ref)
 	d := xlsxDefinedName{
-		Name:         builtInDefinedNames[2],
+		Name:         builtInDefinedNames[3],
 		Hidden:       true,
 		LocalSheetID: intPtr(sheetID),
 		Data:         filterRange,
@@ -490,7 +490,7 @@ func (f *File) AutoFilter(sheet, rangeRef string, opts []AutoFilterOptions) erro
 			if definedName.LocalSheetID != nil {
 				localSheetID = *definedName.LocalSheetID
 			}
-			if definedName.Name == builtInDefinedNames[2] && localSheetID == sheetID && definedName.Hidden {
+			if definedName.Name == builtInDefinedNames[3] && localSheetID == sheetID && definedName.Hidden {
 				wb.DefinedNames.DefinedName[idx].Data = filterRange
 				definedNameExists = true
 			}

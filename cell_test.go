@@ -42,6 +42,9 @@ func TestConcurrency(t *testing.T) {
 			assert.NoError(t, err)
 			// Concurrency set cell style
 			assert.NoError(t, f.SetCellStyle("Sheet1", "A3", "A3", style))
+			// Concurrency get cell style
+			_, err = f.GetCellStyle("Sheet1", "A3")
+			assert.NoError(t, err)
 			// Concurrency add picture
 			assert.NoError(t, f.AddPicture("Sheet1", "F21", filepath.Join("test", "images", "excel.jpg"),
 				&GraphicOptions{
@@ -88,6 +91,14 @@ func TestConcurrency(t *testing.T) {
 			visible, err := f.GetColVisible("Sheet1", "A")
 			assert.NoError(t, err)
 			assert.Equal(t, true, visible)
+			// Concurrency add data validation
+			dv := NewDataValidation(true)
+			dv.Sqref = fmt.Sprintf("A%d:B%d", val, val)
+			assert.NoError(t, dv.SetRange(10, 20, DataValidationTypeWhole, DataValidationOperatorGreaterThan))
+			dv.SetInput(fmt.Sprintf("title:%d", val), strconv.Itoa(val))
+			assert.NoError(t, f.AddDataValidation("Sheet1", dv))
+			// Concurrency delete data validation with reference sequence
+			assert.NoError(t, f.DeleteDataValidation("Sheet1", dv.Sqref))
 			wg.Done()
 		}(i, t)
 	}
@@ -97,6 +108,10 @@ func TestConcurrency(t *testing.T) {
 		t.Error(err)
 	}
 	assert.Equal(t, "1", val)
+	// Test the length of data validation
+	dataValidations, err := f.GetDataValidations("Sheet1")
+	assert.NoError(t, err)
+	assert.Len(t, dataValidations, 0)
 	assert.NoError(t, f.SaveAs(filepath.Join("test", "TestConcurrency.xlsx")))
 	assert.NoError(t, f.Close())
 }
@@ -266,7 +281,7 @@ func TestSetCellValue(t *testing.T) {
 	f.Pkg.Store(defaultXMLPathSharedStrings, []byte(fmt.Sprintf(`<sst xmlns="%s" count="2" uniqueCount="1"><si><t>a</t></si><si><t>a</t></si></sst>`, NameSpaceSpreadSheet.Value)))
 	f.Sheet.Store("xl/worksheets/sheet1.xml", &xlsxWorksheet{
 		SheetData: xlsxSheetData{Row: []xlsxRow{
-			{R: intPtr(1), C: []xlsxC{{R: "A1", T: "str", V: "1"}}},
+			{R: 1, C: []xlsxC{{R: "A1", T: "str", V: "1"}}},
 		}},
 	})
 	assert.NoError(t, f.SetCellValue("Sheet1", "A1", "b"))
@@ -375,6 +390,9 @@ func TestGetCellValue(t *testing.T) {
 	f.Sheet.Delete("xl/worksheets/sheet1.xml")
 	f.Pkg.Store("xl/worksheets/sheet1.xml", []byte(fmt.Sprintf(sheetData, `<row r="0"><c r="H6" t="inlineStr"><is><t>H6</t></is></c><c r="A1" t="inlineStr"><is><t>r0A6</t></is></c><c r="F4" t="inlineStr"><is><t>F4</t></is></c></row><row><c r="A1" t="inlineStr"><is><t>A6</t></is></c><c r="B1" t="inlineStr"><is><t>B6</t></is></c><c r="C1" t="inlineStr"><is><t>C6</t></is></c></row><row r="3"><c r="A3"><v>100</v></c><c r="B3" t="inlineStr"><is><t>B3</t></is></c></row>`)))
 	f.checked = sync.Map{}
+	cell, err = f.GetCellValue("Sheet1", "H6")
+	assert.Equal(t, "H6", cell)
+	assert.NoError(t, err)
 	rows, err = f.GetRows("Sheet1")
 	assert.Equal(t, [][]string{
 		{"A6", "B6", "C6"},
@@ -384,9 +402,6 @@ func TestGetCellValue(t *testing.T) {
 		nil,
 		{"", "", "", "", "", "", "", "H6"},
 	}, rows)
-	assert.NoError(t, err)
-	cell, err = f.GetCellValue("Sheet1", "H6")
-	assert.Equal(t, "H6", cell)
 	assert.NoError(t, err)
 
 	f.Sheet.Delete("xl/worksheets/sheet1.xml")

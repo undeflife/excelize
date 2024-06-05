@@ -831,8 +831,8 @@ func (f *File) CalcCellValue(sheet, cell string, opts ...Options) (result string
 	if !rawCellValue {
 		styleIdx, _ = f.GetCellStyle(sheet, cell)
 	}
-	result = token.Value()
-	if isNum, precision, decimal := isNumeric(result); isNum && !rawCellValue {
+	if token.Type == ArgNumber && !token.Boolean {
+		_, precision, decimal := isNumeric(token.Value())
 		if precision > 15 {
 			result, err = f.formattedValue(&xlsxC{S: styleIdx, V: strings.ToUpper(strconv.FormatFloat(decimal, 'G', 15, 64))}, rawCellValue, CellTypeNumber)
 			return
@@ -840,7 +840,9 @@ func (f *File) CalcCellValue(sheet, cell string, opts ...Options) (result string
 		if !strings.HasPrefix(result, "0") {
 			result, err = f.formattedValue(&xlsxC{S: styleIdx, V: strings.ToUpper(strconv.FormatFloat(decimal, 'f', -1, 64))}, rawCellValue, CellTypeNumber)
 		}
+		return
 	}
+	result, err = f.formattedValue(&xlsxC{S: styleIdx, V: token.Value()}, rawCellValue, CellTypeInlineString)
 	return
 }
 
@@ -4281,7 +4283,7 @@ func (fn *formulaFuncs) EXP(argsList *list.List) formulaArg {
 	if number.Type == ArgError {
 		return number
 	}
-	return newStringFormulaArg(strings.ToUpper(fmt.Sprintf("%g", math.Exp(number.Number))))
+	return newNumberFormulaArg(math.Exp(number.Number))
 }
 
 // fact returns the factorial of a supplied number.
@@ -4359,7 +4361,7 @@ func (fn *formulaFuncs) FLOOR(argsList *list.List) formulaArg {
 			val--
 		}
 	}
-	return newStringFormulaArg(strings.ToUpper(fmt.Sprintf("%g", val*significance.Number)))
+	return newNumberFormulaArg(val * significance.Number)
 }
 
 // FLOORdotMATH function rounds a supplied number down to a supplied multiple
@@ -11570,12 +11572,10 @@ func (fn *formulaFuncs) ISNA(argsList *list.List) formulaArg {
 	if argsList.Len() != 1 {
 		return newErrorFormulaArg(formulaErrorVALUE, "ISNA requires 1 argument")
 	}
-	token := argsList.Front().Value.(formulaArg)
-	result := "FALSE"
-	if token.Type == ArgError && token.String == formulaErrorNA {
-		result = "TRUE"
+	if token := argsList.Front().Value.(formulaArg); token.Type == ArgError && token.String == formulaErrorNA {
+		return newBoolFormulaArg(true)
 	}
-	return newStringFormulaArg(result)
+	return newBoolFormulaArg(false)
 }
 
 // ISNONTEXT function tests if a supplied value is text. If not, the
@@ -11602,7 +11602,22 @@ func (fn *formulaFuncs) ISNUMBER(argsList *list.List) formulaArg {
 	if argsList.Len() != 1 {
 		return newErrorFormulaArg(formulaErrorVALUE, "ISNUMBER requires 1 argument")
 	}
-	if argsList.Front().Value.(formulaArg).Type == ArgNumber {
+	arg := argsList.Front().Value.(formulaArg)
+	if arg.Type == ArgMatrix {
+		var mtx [][]formulaArg
+		for _, row := range arg.Matrix {
+			var array []formulaArg
+			for _, val := range row {
+				if val.Type == ArgNumber {
+					array = append(array, newBoolFormulaArg(true))
+				}
+				array = append(array, newBoolFormulaArg(false))
+			}
+			mtx = append(mtx, array)
+		}
+		return newMatrixFormulaArg(mtx)
+	}
+	if arg.Type == ArgNumber {
 		return newBoolFormulaArg(true)
 	}
 	return newBoolFormulaArg(false)
@@ -11951,11 +11966,14 @@ func (fn *formulaFuncs) OR(argsList *list.List) formulaArg {
 				return newStringFormulaArg(strings.ToUpper(strconv.FormatBool(or)))
 			}
 		case ArgMatrix:
-			// TODO
-			return newErrorFormulaArg(formulaErrorVALUE, formulaErrorVALUE)
+			args := list.New()
+			for _, arg := range token.ToList() {
+				args.PushBack(arg)
+			}
+			return fn.OR(args)
 		}
 	}
-	return newStringFormulaArg(strings.ToUpper(strconv.FormatBool(or)))
+	return newBoolFormulaArg(or)
 }
 
 // SWITCH function compares a number of supplied values to a supplied test
@@ -12063,7 +12081,7 @@ func (fn *formulaFuncs) DATE(argsList *list.List) formulaArg {
 		return newErrorFormulaArg(formulaErrorVALUE, "DATE requires 3 number arguments")
 	}
 	d := makeDate(int(year.Number), time.Month(month.Number), int(day.Number))
-	return newStringFormulaArg(timeFromExcelTime(daysBetween(excelMinTime1900.Unix(), d)+1, false).String())
+	return newNumberFormulaArg(daysBetween(excelMinTime1900.Unix(), d) + 1)
 }
 
 // calcDateDif is an implementation of the formula function DATEDIF,
@@ -13741,34 +13759,48 @@ func (fn *formulaFuncs) find(name string, argsList *list.List) formulaArg {
 	if args.Type != ArgList {
 		return args
 	}
-	findText := argsList.Front().Value.(formulaArg).Value()
+	findTextArg := argsList.Front().Value.(formulaArg)
 	withinText := argsList.Front().Next().Value.(formulaArg).Value()
 	startNum := int(args.List[0].Number)
-	if findText == "" {
-		return newNumberFormulaArg(float64(startNum))
-	}
 	dbcs, search := name == "FINDB" || name == "SEARCHB", name == "SEARCH" || name == "SEARCHB"
-	if search {
-		findText, withinText = strings.ToUpper(findText), strings.ToUpper(withinText)
-	}
-	offset, ok := matchPattern(findText, withinText, dbcs, startNum)
-	if !ok {
-		return newErrorFormulaArg(formulaErrorVALUE, formulaErrorVALUE)
-	}
-	result := offset
-	if dbcs {
-		var pre int
-		for idx := range withinText {
-			if pre > offset {
-				break
-			}
-			if idx-pre > 1 {
-				result++
-			}
-			pre = idx
+	find := func(findText string) formulaArg {
+		if findText == "" {
+			return newNumberFormulaArg(float64(startNum))
 		}
+		if search {
+			findText, withinText = strings.ToUpper(findText), strings.ToUpper(withinText)
+		}
+		offset, ok := matchPattern(findText, withinText, dbcs, startNum)
+		if !ok {
+			return newErrorFormulaArg(formulaErrorVALUE, formulaErrorVALUE)
+		}
+		result := offset
+		if dbcs {
+			var pre int
+			for idx := range withinText {
+				if pre > offset {
+					break
+				}
+				if idx-pre > 1 {
+					result++
+				}
+				pre = idx
+			}
+		}
+		return newNumberFormulaArg(float64(result))
 	}
-	return newNumberFormulaArg(float64(result))
+	if findTextArg.Type == ArgMatrix {
+		var mtx [][]formulaArg
+		for _, row := range findTextArg.Matrix {
+			var array []formulaArg
+			for _, findText := range row {
+				array = append(array, find(findText.Value()))
+			}
+			mtx = append(mtx, array)
+		}
+		return newMatrixFormulaArg(mtx)
+	}
+	return find(findTextArg.Value())
 }
 
 // LEFT function returns a specified number of characters from the start of a

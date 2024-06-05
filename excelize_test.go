@@ -208,6 +208,30 @@ func TestSaveFile(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, f.Save())
 	assert.NoError(t, f.Close())
+
+	t.Run("for_save_multiple_times", func(t *testing.T) {
+		{
+			f, err := OpenFile(filepath.Join("test", "TestSaveFile.xlsx"))
+			assert.NoError(t, err)
+			assert.NoError(t, f.SetCellValue("Sheet1", "A20", 20))
+			assert.NoError(t, f.Save())
+
+			assert.NoError(t, f.SetCellValue("Sheet1", "A21", 21))
+			assert.NoError(t, f.Save())
+			assert.NoError(t, f.Close())
+		}
+		{
+			f, err := OpenFile(filepath.Join("test", "TestSaveFile.xlsx"))
+			assert.NoError(t, err)
+			val, err := f.GetCellValue("Sheet1", "A20")
+			assert.NoError(t, err)
+			assert.Equal(t, "20", val)
+			val, err = f.GetCellValue("Sheet1", "A21")
+			assert.NoError(t, err)
+			assert.Equal(t, "21", val)
+			assert.NoError(t, f.Close())
+		}
+	})
 }
 
 func TestSaveAsWrongPath(t *testing.T) {
@@ -365,11 +389,11 @@ func TestNewFile(t *testing.T) {
 	f := NewFile()
 	_, err := f.NewSheet("Sheet1")
 	assert.NoError(t, err)
-	_, err = f.NewSheet("XLSXSheet2")
+	_, err = f.NewSheet("Sheet2")
 	assert.NoError(t, err)
-	_, err = f.NewSheet("XLSXSheet3")
+	_, err = f.NewSheet("Sheet3")
 	assert.NoError(t, err)
-	assert.NoError(t, f.SetCellInt("XLSXSheet2", "A23", 56))
+	assert.NoError(t, f.SetCellInt("Sheet2", "A23", 56))
 	assert.NoError(t, f.SetCellStr("Sheet1", "B20", "42"))
 	f.SetActiveSheet(0)
 
@@ -742,11 +766,11 @@ func TestSetCellStyleNumberFormat(t *testing.T) {
 	idxTbl := []int{0, 1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49}
 	value := []string{"37947.7500001", "-37947.7500001", "0.007", "2.1", "String"}
 	expected := [][]string{
-		{"37947.7500001", "37948", "37947.75", "37,948", "37,947.75", "3794775%", "3794775.00%", "3.79E+04", "37947 3/4", "37947 3/4", "11-22-03", "22-Nov-03", "22-Nov", "Nov-03", "6:00 PM", "6:00:00 PM", "18:00", "18:00:00", "11/22/03 18:00", "37,948 ", "37,948 ", "37,947.75 ", "37,947.75 ", "37,948", "$37,948", "37,947.75", "$37,947.75", "00:00", "910746:00:00", "00:00.0", "37947.7500001", "37947.7500001"},
-		{"-37947.7500001", "-37948", "-37947.75", "-37,948", "-37,947.75", "-3794775%", "-3794775.00%", "-3.79E+04", "-37947 3/4", "-37947 3/4", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "(37,948)", "(37,948)", "(37,947.75)", "(37,947.75)", "(37,948)", "$(37,948)", "(37,947.75)", "$(37,947.75)", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001"},
-		{"0.007", "0", "0.01", "0", "0.01", "1%", "0.70%", "7.00E-03", "0    ", "0    ", "12-30-99", "30-Dec-99", "30-Dec", "Dec-99", "12:10 AM", "12:10:05 AM", "00:10", "00:10:05", "12/30/99 00:10", "0 ", "0 ", "0.01 ", "0.01 ", "0", "$0", "0.01", "$0.01", "10:05", "0:10:05", "10:04.8", "0.007", "0.007"},
-		{"2.1", "2", "2.10", "2", "2.10", "210%", "210.00%", "2.10E+00", "2 1/9", "2 1/10", "01-01-00", "1-Jan-00", "1-Jan", "Jan-00", "2:24 AM", "2:24:00 AM", "02:24", "02:24:00", "1/1/00 02:24", "2 ", "2 ", "2.10 ", "2.10 ", "2", "$2", "2.10", "$2.10", "24:00", "50:24:00", "24:00.0", "2.1", "2.1"},
-		{"String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String"},
+		{"37947.75", "37948", "37947.75", "37,948", "37,947.75", "3794775%", "3794775.00%", "3.79E+04", "37947 3/4", "37947 3/4", "11-22-03", "22-Nov-03", "22-Nov", "Nov-03", "6:00 PM", "6:00:00 PM", "18:00", "18:00:00", "11/22/03 18:00", "37,948 ", "37,948 ", "37,947.75 ", "37,947.75 ", " 37,948 ", " $37,948 ", " 37,947.75 ", " $37,947.75 ", "00:00", "910746:00:00", "00:00.0", "37947.7500001", "37947.7500001"},
+		{"-37947.75", "-37948", "-37947.75", "-37,948", "-37,947.75", "-3794775%", "-3794775.00%", "-3.79E+04", "-37947 3/4", "-37947 3/4", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "(37,948)", "(37,948)", "(37,947.75)", "(37,947.75)", " (37,948)", " $(37,948)", " (37,947.75)", " $(37,947.75)", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001", "-37947.7500001"},
+		{"0.007", "0", "0.01", "0", "0.01", "1%", "0.70%", "7.00E-03", "0    ", "0    ", "12-30-99", "30-Dec-99", "30-Dec", "Dec-99", "12:10 AM", "12:10:05 AM", "00:10", "00:10:05", "12/30/99 00:10", "0 ", "0 ", "0.01 ", "0.01 ", " 0 ", " $0 ", " 0.01 ", " $0.01 ", "10:05", "0:10:05", "10:04.8", "0.007", "0.007"},
+		{"2.1", "2", "2.10", "2", "2.10", "210%", "210.00%", "2.10E+00", "2 1/9", "2 1/10", "01-01-00", "1-Jan-00", "1-Jan", "Jan-00", "2:24 AM", "2:24:00 AM", "02:24", "02:24:00", "1/1/00 02:24", "2 ", "2 ", "2.10 ", "2.10 ", " 2 ", " $2 ", " 2.10 ", " $2.10 ", "24:00", "50:24:00", "24:00.0", "2.1", "2.1"},
+		{"String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", "String", " String ", " String ", " String ", " String ", "String", "String", "String", "String", "String"},
 	}
 
 	for c, v := range value {
@@ -962,7 +986,7 @@ func TestSetDeleteSheet(t *testing.T) {
 		f, err := prepareTestBook3()
 		assert.NoError(t, err)
 
-		assert.NoError(t, f.DeleteSheet("XLSXSheet3"))
+		assert.NoError(t, f.DeleteSheet("Sheet3"))
 		assert.NoError(t, f.SaveAs(filepath.Join("test", "TestSetDeleteSheet.TestBook3.xlsx")))
 	})
 
@@ -1088,7 +1112,7 @@ func TestConditionalFormat(t *testing.T) {
 			{
 				Type:     "cell",
 				Criteria: "between",
-				Format:   format1,
+				Format:   &format1,
 				MinValue: "6",
 				MaxValue: "8",
 			},
@@ -1100,7 +1124,7 @@ func TestConditionalFormat(t *testing.T) {
 			{
 				Type:     "cell",
 				Criteria: ">",
-				Format:   format3,
+				Format:   &format3,
 				Value:    "6",
 			},
 		},
@@ -1111,7 +1135,7 @@ func TestConditionalFormat(t *testing.T) {
 			{
 				Type:     "top",
 				Criteria: "=",
-				Format:   format3,
+				Format:   &format3,
 			},
 		},
 	))
@@ -1121,7 +1145,7 @@ func TestConditionalFormat(t *testing.T) {
 			{
 				Type:     "unique",
 				Criteria: "=",
-				Format:   format2,
+				Format:   &format2,
 			},
 		},
 	))
@@ -1131,7 +1155,7 @@ func TestConditionalFormat(t *testing.T) {
 			{
 				Type:     "duplicate",
 				Criteria: "=",
-				Format:   format2,
+				Format:   &format2,
 			},
 		},
 	))
@@ -1141,7 +1165,7 @@ func TestConditionalFormat(t *testing.T) {
 			{
 				Type:     "top",
 				Criteria: "=",
-				Format:   format1,
+				Format:   &format1,
 				Value:    "6",
 				Percent:  true,
 			},
@@ -1153,7 +1177,7 @@ func TestConditionalFormat(t *testing.T) {
 			{
 				Type:         "average",
 				Criteria:     "=",
-				Format:       format3,
+				Format:       &format3,
 				AboveAverage: true,
 			},
 		},
@@ -1164,7 +1188,7 @@ func TestConditionalFormat(t *testing.T) {
 			{
 				Type:         "average",
 				Criteria:     "=",
-				Format:       format1,
+				Format:       &format1,
 				AboveAverage: false,
 			},
 		},
@@ -1187,7 +1211,7 @@ func TestConditionalFormat(t *testing.T) {
 			{
 				Type:     "formula",
 				Criteria: "L2<3",
-				Format:   format1,
+				Format:   &format1,
 			},
 		},
 	))
@@ -1197,7 +1221,7 @@ func TestConditionalFormat(t *testing.T) {
 			{
 				Type:     "cell",
 				Criteria: ">",
-				Format:   format4,
+				Format:   &format4,
 				Value:    "0",
 			},
 		},
@@ -1610,13 +1634,13 @@ func prepareTestBook1() (*File, error) {
 
 func prepareTestBook3() (*File, error) {
 	f := NewFile()
-	if _, err := f.NewSheet("XLSXSheet2"); err != nil {
+	if _, err := f.NewSheet("Sheet2"); err != nil {
 		return nil, err
 	}
-	if _, err := f.NewSheet("XLSXSheet3"); err != nil {
+	if _, err := f.NewSheet("Sheet3"); err != nil {
 		return nil, err
 	}
-	if err := f.SetCellInt("XLSXSheet2", "A23", 56); err != nil {
+	if err := f.SetCellInt("Sheet2", "A23", 56); err != nil {
 		return nil, err
 	}
 	if err := f.SetCellStr("Sheet1", "B20", "42"); err != nil {

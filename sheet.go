@@ -167,7 +167,7 @@ func (f *File) workSheetWriter() {
 			_, ok := f.checked.Load(p.(string))
 			if ok {
 				f.Sheet.Delete(p.(string))
-				f.checked.Store(p.(string), false)
+				f.checked.Delete(p.(string))
 			}
 			buffer.Reset()
 		}
@@ -363,7 +363,7 @@ func (f *File) SetSheetName(source, target string) error {
 	if err = checkSheetName(target); err != nil {
 		return err
 	}
-	if strings.EqualFold(target, source) {
+	if target == source {
 		return err
 	}
 	wb, _ := f.workbookReader()
@@ -1957,7 +1957,7 @@ func (ws *xlsxWorksheet) prepareSheetXML(col int, row int) {
 	if rowCount < row {
 		// append missing rows
 		for rowIdx := rowCount; rowIdx < row; rowIdx++ {
-			ws.SheetData.Row = append(ws.SheetData.Row, xlsxRow{R: intPtr(rowIdx + 1), CustomHeight: customHeight, Ht: ht, C: make([]xlsxC, 0, sizeHint)})
+			ws.SheetData.Row = append(ws.SheetData.Row, xlsxRow{R: rowIdx + 1, CustomHeight: customHeight, Ht: ht, C: make([]xlsxC, 0, sizeHint)})
 		}
 	}
 	rowData := &ws.SheetData.Row[row-1]
@@ -2014,7 +2014,7 @@ func (f *File) SetSheetDimension(sheet string, rangeRef string) error {
 		return err
 	}
 	_ = sortCoordinates(coordinates)
-	ref, err := f.coordinatesToRangeRef(coordinates)
+	ref, err := coordinatesToRangeRef(coordinates)
 	ws.Dimension = &xlsxDimension{Ref: ref}
 	return err
 }

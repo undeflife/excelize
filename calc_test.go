@@ -1451,8 +1451,9 @@ func TestCalcCellValue(t *testing.T) {
 		"=ISNONTEXT(\"Excelize\")": "FALSE",
 		"=ISNONTEXT(NA())":         "TRUE",
 		// ISNUMBER
-		"=ISNUMBER(A1)": "TRUE",
-		"=ISNUMBER(D1)": "FALSE",
+		"=ISNUMBER(A1)":    "TRUE",
+		"=ISNUMBER(D1)":    "FALSE",
+		"=ISNUMBER(A1:B1)": "TRUE",
 		// ISODD
 		"=ISODD(A1)": "TRUE",
 		"=ISODD(A2)": "FALSE",
@@ -1526,6 +1527,7 @@ func TestCalcCellValue(t *testing.T) {
 		"=OR(1=2,2=3)":            "FALSE",
 		"=OR(1=1,2=3)":            "TRUE",
 		"=OR(\"TRUE\",\"FALSE\")": "TRUE",
+		"=OR(A1:B1)":              "TRUE",
 		// SWITCH
 		"=SWITCH(1,1,\"A\",2,\"B\",3,\"C\",\"N\")": "A",
 		"=SWITCH(3,1,\"A\",2,\"B\",3,\"C\",\"N\")": "C",
@@ -1538,8 +1540,9 @@ func TestCalcCellValue(t *testing.T) {
 		"=XOR(1>0,0>1,INT(0),INT(1),A1:A4,2)": "FALSE",
 		// Date and Time Functions
 		// DATE
-		"=DATE(2020,10,21)": "2020-10-21 00:00:00 +0000 UTC",
-		"=DATE(1900,1,1)":   "1899-12-31 00:00:00 +0000 UTC",
+		"=DATE(2020,10,21)":   "44125",
+		"=DATE(2020,10,21)+1": "44126",
+		"=DATE(1900,1,1)":     "1",
 		// DATEDIF
 		"=DATEDIF(43101,43101,\"D\")":  "0",
 		"=DATEDIF(43101,43891,\"d\")":  "790",
@@ -1748,6 +1751,7 @@ func TestCalcCellValue(t *testing.T) {
 		"=FIND(\"\",\"Original Text\")":    "1",
 		"=FIND(\"\",\"Original Text\",2)":  "2",
 		"=FIND(\"s\",\"Sales\",2)":         "5",
+		"=FIND(D1:E2,\"Month\")":           "1",
 		// FINDB
 		"=FINDB(\"T\",\"Original Text\")":   "10",
 		"=FINDB(\"t\",\"Original Text\")":   "13",
@@ -3663,7 +3667,6 @@ func TestCalcCellValue(t *testing.T) {
 		"=NOT(\"\")":  {"#VALUE!", "NOT expects 1 boolean or numeric argument"},
 		// OR
 		"=OR(\"text\")":                          {"#VALUE!", "#VALUE!"},
-		"=OR(A1:B1)":                             {"#VALUE!", "#VALUE!"},
 		"=OR(\"1\",\"TRUE\",\"FALSE\")":          {"#VALUE!", "#VALUE!"},
 		"=OR()":                                  {"#VALUE!", "OR requires at least 1 argument"},
 		"=OR(1" + strings.Repeat(",1", 30) + ")": {"#VALUE!", "OR accepts at most 30 arguments"},
@@ -4773,7 +4776,7 @@ func TestCalcOR(t *testing.T) {
 	})
 	fn := formulaFuncs{}
 	result := fn.OR(argsList)
-	assert.Equal(t, result.String, "FALSE")
+	assert.Equal(t, result.Value(), "FALSE")
 	assert.Empty(t, result.Error)
 }
 
@@ -6308,13 +6311,31 @@ func TestFormulaRawCellValueOption(t *testing.T) {
 		raw      bool
 		expected string
 	}{
-		{"=\"10e3\"", false, "10000"},
+		{"=VALUE(\"1.0E-07\")", false, "0.00"},
+		{"=VALUE(\"1.0E-07\")", true, "0.0000001"},
+		{"=\"text\"", false, "$text"},
+		{"=\"text\"", true, "text"},
+		{"=\"10e3\"", false, "$10e3"},
 		{"=\"10e3\"", true, "10e3"},
-		{"=\"10\" & \"e3\"", false, "10000"},
+		{"=\"10\" & \"e3\"", false, "$10e3"},
 		{"=\"10\" & \"e3\"", true, "10e3"},
-		{"=\"1111111111111111\"", false, "1.11111111111111E+15"},
+		{"=10e3", false, "10000.00"},
+		{"=10e3", true, "10000"},
+		{"=\"1111111111111111\"", false, "$1111111111111111"},
 		{"=\"1111111111111111\"", true, "1111111111111111"},
+		{"=1111111111111111", false, "1111111111111110.00"},
+		{"=1111111111111111", true, "1.11111111111111E+15"},
+		{"=1444.00000000003", false, "1444.00"},
+		{"=1444.00000000003", true, "1444.00000000003"},
+		{"=1444.000000000003", false, "1444.00"},
+		{"=1444.000000000003", true, "1444"},
+		{"=ROUND(1444.00000000000003,2)", false, "1444.00"},
+		{"=ROUND(1444.00000000000003,2)", true, "1444"},
 	}
+	exp := "0.00;0.00;;$@"
+	styleID, err := f.NewStyle(&Style{CustomNumFmt: &exp})
+	assert.NoError(t, err)
+	assert.NoError(t, f.SetCellStyle("Sheet1", "A1", "A1", styleID))
 	for _, test := range rawTest {
 		assert.NoError(t, f.SetCellFormula("Sheet1", "A1", test.value))
 		val, err := f.CalcCellValue("Sheet1", "A1", Options{RawCellValue: test.raw})
