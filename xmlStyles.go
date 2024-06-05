@@ -276,7 +276,8 @@ type xlsxTableStyles struct {
 // should format and display a table.
 type xlsxTableStyle struct {
 	Name              string `xml:"name,attr,omitempty"`
-	Pivot             int    `xml:"pivot,attr"`
+	// pivot should usually be a number, but in some cases it can be a boolean string like false.
+	Pivot             any    `xml:"pivot,attr"`
 	Count             int    `xml:"count,attr,omitempty"`
 	Table             bool   `xml:"table,attr,omitempty"`
 	TableStyleElement string `xml:",innerxml"`
