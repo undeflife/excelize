@@ -33,8 +33,11 @@ func (f *File) Hyperlinks(sheet string) (map[string]string, error) {
 			return links, nil
 		}
 		switch xmlElement := token.(type) {
+
 		case xml.StartElement:
-			if xmlElement.Name.Local == "hyperlink" {
+			if xmlElement.Name.Local == "sheetData" {
+				skipElement(xmlDecoder, xmlElement)
+			} else if xmlElement.Name.Local == "hyperlink" {
 				var ref, id string
 				for _, attr := range xmlElement.Attr {
 					if attr.Name.Local == "ref" && ref == "" {
@@ -51,6 +54,28 @@ func (f *File) Hyperlinks(sheet string) (map[string]string, error) {
 		case xml.EndElement:
 			if xmlElement.Name.Local == "hyperlinks" {
 				return links, nil
+			}
+		}
+	}
+}
+
+func skipElement(decoder *xml.Decoder, se xml.StartElement) error {
+	// We will keep reading tokens until we encounter the end of this element
+	for {
+		t, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+
+		switch t := t.(type) {
+		case xml.StartElement:
+			// Recursively skip nested elements
+			if err := skipElement(decoder, t); err != nil {
+				return err
+			}
+		case xml.EndElement:
+			if t.Name.Local == se.Name.Local {
+				return nil // We found the end of the current element
 			}
 		}
 	}
