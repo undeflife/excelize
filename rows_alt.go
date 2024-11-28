@@ -5,6 +5,7 @@ package excelize
 
 import (
 	"encoding/xml"
+	"os"
 )
 
 type RichText struct {
@@ -62,7 +63,7 @@ func (r RichText) isEmpty() bool {
 // Values return the current row's column values. This fetches the worksheet
 // data as a stream, returns each cell in a row as is, and will not skip empty
 // rows in the tail of the worksheet.
-func (rows *Rows) Values() ([]RichText, error) {
+func (rows *AltRows) Values() ([]RichText, error) {
 	if rows.curRow > rows.seekRow {
 		return nil, nil
 	}
@@ -94,13 +95,27 @@ func (rows *Rows) Values() ([]RichText, error) {
 					return rowIterator.cells, rowIterator.err
 				}
 			}
+			if xmlElement.Name.Local == "hyperlink" {
+				var ref, id string
+				for _, attr := range xmlElement.Attr {
+					if attr.Name.Local == "ref" && ref == "" {
+						ref = attr.Value
+					}
+					if attr.Name.Local == "id" && id == "" {
+						id = attr.Value
+					}
+				}
+				if ref != "" && id != "" {
+					rows.links[ref] = id
+				}
+			}
 			if rows.rowRichHandler(&rowIterator, &xmlElement, rows.rawCellValue); rowIterator.err != nil {
 				rows.token = nil
 				return rowIterator.cells, rowIterator.err
 			}
 			rows.token = nil
 		case xml.EndElement:
-			if xmlElement.Name.Local == "sheetData" {
+			if xmlElement.Name.Local == "worksheet" {
 				return rowIterator.cells, rowIterator.err
 			}
 		}
@@ -109,7 +124,7 @@ func (rows *Rows) Values() ([]RichText, error) {
 }
 
 // rowXMLHandler parse the row XML element of the worksheet.
-func (rows *Rows) rowRichHandler(rowIterator *rowRichIterator, xmlElement *xml.StartElement, raw bool) {
+func (rows *AltRows) rowRichHandler(rowIterator *rowRichIterator, xmlElement *xml.StartElement, raw bool) {
 	if rowIterator.inElement == "c" {
 		rowIterator.cellCol++
 		colCell := xlsxC{}
@@ -136,4 +151,75 @@ func appendSpaceToRich(l int, s []RichText) []RichText {
 		}})
 	}
 	return s
+}
+
+type AltRows struct {
+	err                     error
+	curRow, seekRow         int
+	needClose, rawCellValue bool
+	sheet                   string
+	f                       *File
+	tempFile                *os.File
+	sst                     *xlsxSST
+	decoder                 *xml.Decoder
+	token                   xml.Token
+	curRowOpts, seekRowOpts RowOpts
+	links                   map[string]string
+}
+
+func (f *File) AltRows(sheet string) (*AltRows, error) {
+	if err := checkSheetName(sheet); err != nil {
+		return nil, err
+	}
+	name, ok := f.getSheetXMLPath(sheet)
+	if !ok {
+		return nil, ErrSheetNotExist{sheet}
+	}
+	if worksheet, ok := f.Sheet.Load(name); ok && worksheet != nil {
+		ws := worksheet.(*xlsxWorksheet)
+		ws.mu.Lock()
+		defer ws.mu.Unlock()
+		// Flush data
+		output, _ := xml.Marshal(ws)
+		f.saveFileList(name, f.replaceNameSpaceBytes(name, output))
+	}
+	var err error
+	rows := AltRows{f: f, sheet: name}
+	rows.needClose, rows.decoder, rows.tempFile, err = f.xmlDecoder(name)
+	rows.links = map[string]string{}
+	return &rows, err
+}
+
+func (rows *AltRows) Next() bool {
+	rows.seekRow++
+	if rows.curRow >= rows.seekRow {
+		rows.curRowOpts = rows.seekRowOpts
+		return true
+	}
+	for {
+		token, _ := rows.decoder.Token()
+		if token == nil {
+			return false
+		}
+		switch xmlElement := token.(type) {
+		case xml.StartElement:
+			if xmlElement.Name.Local == "row" {
+				rows.curRow++
+				if rowNum, _ := attrValToInt("r", xmlElement.Attr); rowNum != 0 {
+					rows.curRow = rowNum
+				}
+				rows.token = token
+				rows.curRowOpts = extractRowOpts(xmlElement.Attr)
+				return true
+			}
+		case xml.EndElement:
+			if xmlElement.Name.Local == "worksheet" {
+				return false
+			}
+		}
+	}
+}
+
+func (rows *AltRows) GetHyperlinks() map[string]string {
+	return rows.links
 }
