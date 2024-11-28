@@ -95,6 +95,20 @@ func (rows *AltRows) Values() ([]RichText, error) {
 					return rowIterator.cells, rowIterator.err
 				}
 			}
+			if xmlElement.Name.Local == "hyperlink" {
+				var ref, id string
+				for _, attr := range xmlElement.Attr {
+					if attr.Name.Local == "ref" && ref == "" {
+						ref = attr.Value
+					}
+					if attr.Name.Local == "id" && id == "" {
+						id = attr.Value
+					}
+				}
+				if ref != "" && id != "" {
+					rows.links[ref] = id
+				}
+			}
 			if rows.rowRichHandler(&rowIterator, &xmlElement, rows.rawCellValue); rowIterator.err != nil {
 				rows.token = nil
 				return rowIterator.cells, rowIterator.err
@@ -197,19 +211,6 @@ func (rows *AltRows) Next() bool {
 				rows.token = token
 				rows.curRowOpts = extractRowOpts(xmlElement.Attr)
 				return true
-			} else if xmlElement.Name.Local == "hyperlink" {
-				var ref, id string
-				for _, attr := range xmlElement.Attr {
-					if attr.Name.Local == "ref" && ref == "" {
-						ref = attr.Value
-					}
-					if attr.Name.Local == "id" && id == "" {
-						id = attr.Value
-					}
-				}
-				if ref != "" && id != "" {
-					rows.links[ref] = id
-				}
 			}
 		case xml.EndElement:
 			if xmlElement.Name.Local == "worksheet" {
