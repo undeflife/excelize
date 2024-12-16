@@ -1,6 +1,8 @@
 package excelize
 
-import "encoding/xml"
+import (
+	"encoding/xml"
+)
 
 // A monkey-patched	version of sheet.go that provides a function to get all external links in the worksheet,
 // that enables a more flexible way to deal with hyperlinks instead of get hyperlink cell by cell inefficiently.
@@ -48,7 +50,7 @@ func (f *File) Hyperlinks(sheet string) (map[string]string, error) {
 					}
 				}
 				if ref != "" && id != "" {
-					links[ref] = id
+					links[ref] = f.getSheetRelationshipsTargetByID(sheet, id)
 				}
 			}
 		case xml.EndElement:
