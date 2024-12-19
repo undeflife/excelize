@@ -761,3 +761,12 @@ func TestSheetDimension(t *testing.T) {
 	assert.Empty(t, dimension)
 	assert.EqualError(t, err, "sheet SheetN does not exist")
 }
+
+func TestSheetAltHyperlink(t *testing.T) {
+	f, err := OpenFile(filepath.Join("test", "BookLink.xlsx"))
+	assert.NoError(t, err)
+	sheetList := f.GetSheetList()
+	links, err := f.Hyperlinks(sheetList[0])
+	assert.NoError(t, err)
+	assert.Equal(t, "https://www.baidu.com/", links["A2"])
+}

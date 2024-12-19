@@ -89,8 +89,12 @@ func (f *File) formattedRichValue(c *xlsxC, raw bool, cellType CellType) (RichTe
 	}
 	var font *xlsxFont
 	if styleSheet.CellXfs.Xf[c.S].FontID != nil {
-		font = styleSheet.Fonts.Font[*styleSheet.CellXfs.Xf[c.S].FontID]
-		// replace color rgb 
+		fontId := *styleSheet.CellXfs.Xf[c.S].FontID
+		if fontId >= len(styleSheet.Fonts.Font) || fontId < 0 {
+			return newRichText(c.V), err
+		}
+		font = styleSheet.Fonts.Font[fontId]
+		// replace color rgb
 		if font.Color != nil && !f.isWindowColor(font.Color) {
 			font.Color.RGB = f.getThemeColorIgnoreFew(font.Color)
 		}
